@@ -1,0 +1,5 @@
+export { SubtitleHomePage } from './pages/SubtitleHomePage'
+export { SubtitleViewerPage } from './pages/SubtitleViewerPage'
+export { SubtitleProvidersPage } from './pages/SubtitleProvidersPage'
+export { SubtitleHistoryPage } from './pages/SubtitleHistoryPage'
+export { SubtitleSettingsPage } from './pages/SubtitleSettingsPage'

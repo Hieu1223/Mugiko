@@ -1,0 +1,53 @@
+# Binaries
+*.bin
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Build outputs
+/dist
+/build
+/out
+*.apkg
+
+# Dependencies
+/node_modules
+/vendor
+/__pycache__
+/.venv
+/venv
+/env
+*.egg-info
+
+# IDE
+/.vscode
+/.idea
+/*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+.env.*.local
+nim.txt
+
+# Logs
+*.log
+/logs
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.dockerignore
+
+# Temporary
+*.tmp
+*.temp
+*.bak
+
+# Test coverage
+/coverage
+/.nyc_output

@@ -1,0 +1,5 @@
+export { WebNovelHomePage } from './pages/WebNovelHomePage'
+export { WebNovelAddPage } from './pages/WebNovelAddPage'
+export { WebNovelSearchPage } from './pages/WebNovelSearchPage'
+export { WebNovelDetailPage } from './pages/WebNovelDetailPage'
+export { WebNovelReaderPage } from './pages/WebNovelReaderPage'

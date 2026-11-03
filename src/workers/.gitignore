@@ -1,0 +1,6 @@
+nim.txt
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.env

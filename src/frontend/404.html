@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="description" content="Japanese subtitle and web novel study tools." />
+    <title>Not found // MUGIKO</title>
+    <script>
+      // Static hosts serve this page for old path-style links. Send those to
+      // the new multi-page URLs before the app boots.
+      ;(function () {
+        var path = location.pathname.replace(/\/+$/, '') || '/'
+        var match
+        function go(url) {
+          location.replace(url)
+        }
+        if (path === '/subtitle' || path === '/webnovel' || path === '/decks' || path === '/lookup') {
+          go(path + '/')
+          return
+        }
+        if ((match = path.match(/^\/subtitle\/([^/]+)$/))) {
+          if (['create', 'providers', 'history', 'settings', 'viewer'].indexOf(match[1]) === -1) {
+            go('/subtitle/viewer/?subtitleId=' + encodeURIComponent(match[1]))
+            return
+          }
+        }
+        if ((match = path.match(/^\/decks\/([^/]+)$/))) {
+          if (match[1] !== 'detail') {
+            go('/decks/detail/?deckId=' + encodeURIComponent(match[1]))
+            return
+          }
+        }
+        if ((match = path.match(/^\/webnovel\/chapters\/([^/]+)$/))) {
+          go('/webnovel/reader/?chapterId=' + encodeURIComponent(match[1]))
+          return
+        }
+        if ((match = path.match(/^\/webnovel\/([^/]+)$/))) {
+          if (['add', 'search', 'detail', 'reader', 'chapters'].indexOf(match[1]) === -1) {
+            go('/webnovel/detail/?novelId=' + encodeURIComponent(match[1]))
+          }
+        }
+      })()
+    </script>
+  </head>
+  <body data-page="not-found">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

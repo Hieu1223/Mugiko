@@ -1,0 +1,204 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: mugiko_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: mugiko
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/deploy/sql/setup:/docker-entrypoint-initdb.d:ro
+    command: >
+      postgres
+      -c wal_level=logical
+      -c max_replication_slots=4
+      -c max_wal_senders=4
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mugiko"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  sequin_redis:
+    image: redis:7-alpine
+    container_name: mugiko_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  sequin:
+    image: sequin/sequin:latest
+    container_name: mugiko_sequin
+    restart: unless-stopped
+    pull_policy: always
+    ports:
+      - "7376:7376"
+    environment:
+      - PG_HOSTNAME=postgres
+      - PG_DATABASE=mugiko
+      - PG_PORT=5432
+      - PG_USERNAME=postgres
+      - PG_PASSWORD=postgres
+      - PG_POOL_SIZE=20
+      - SECRET_KEY_BASE=wDPLYus0pvD6qJhKJICO4dauYPXfO/Yl782Zjtpew5qRBDp7CZvbWtQmY0eB13If
+      - VAULT_KEY=2Sig69bIpuSm2kv0VQfDekET2qy8qUZGI8v3/h3ASiY=
+      - REDIS_URL=redis://sequin_redis:6379
+      - CONFIG_FILE_PATH=/config/playground.yml
+    volumes:
+      - ./scripts/deploy/playground.yml:/config/playground.yml:ro
+      - ./scripts/deploy/sql/sequin:/config/sql:ro
+    depends_on:
+      sequin_redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ./src/backend
+      dockerfile: Dockerfile
+    container_name: mugiko_api
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      DB_DRIVER: postgres
+      DB_PATH: postgres://postgres:postgres@postgres:5432/mugiko?sslmode=disable
+      PORT: "8080"
+      LOG_DIR: /app/logs
+      REDIS_URL: redis://sequin_redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      sequin_redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./src/frontend
+      dockerfile: Dockerfile
+    container_name: mugiko_frontend
+    restart: unless-stopped
+    expose:
+      - "3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  nginx:
+    image: nginx:alpine
+    container_name: mugiko_nginx
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    volumes:
+      - ./scripts/deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      frontend:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  work-server:
+    build:
+      context: ./src/workers
+      dockerfile: Dockerfile
+    container_name: mugiko_work_server
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/mugiko
+      REDIS_URL: redis://sequin_redis:6379/0
+      SUBTITLE_STREAM: subtitle_queue
+      CONSUMER_GROUP: subtitle-workers
+      CONSUMER_NAME: worker-1
+      READ_BLOCK_MS: "2000"
+      CLAIM_IDLE_MS: "300000"
+      SUBTITLE_CACHE_TTL_SECONDS: "604800"
+      STATUS_STREAM: subtitle_status
+      STATUS_STREAM_MAXLEN: "10000"
+      NVIDIA_API_KEYS_FILE: nim.txt
+      NVIDIA_NIM_BASE_URL: https://integrate.api.nvidia.com/v1
+      NVIDIA_NIM_MODEL: nvidia/nemotron-3-ultra-550b-a55b
+      NVIDIA_NIM_TEMPERATURE: "0.2"
+      NVIDIA_NIM_MAX_TOKENS: "4096"
+      NVIDIA_NIM_TIMEOUT_SECONDS: "120"
+      LLM_POLL_INTERVAL_MS: "2000"
+      LLM_STALE_PROCESSING_SECONDS: "900"
+      LLM_STATUS_STREAM: llm_status
+      LLM_STATUS_STREAM_MAXLEN: "10000"
+    volumes:
+      - ./src/workers/nim.txt:/app/nim.txt:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      sequin_redis:
+        condition: service_healthy
+
+  llm_server:
+    build:
+      context: ./src/llm
+      dockerfile: Dockerfile
+    container_name: mugiko_llm_server
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/mugiko
+      - REDIS_URL=redis://sequin_redis:6379/0
+      - NVIDIA_API_KEYS_FILE=/app/nim.txt
+      - LLM_CONSUMER_GROUP=llm-workers
+      - LLM_CONSUMER_NAME=worker-1
+      - LLM_INPUT_STREAM=conversation_messages
+      - LLM_JOBS_STREAM=llm_jobs
+      - LLM_OUTPUT_STREAM=llm_responses
+      - LLM_READ_BLOCK_MS=5000
+      - LLM_CLAIM_IDLE_MS=300000
+      - LLM_STREAM_MAXLEN=10000
+      - NVIDIA_NIM_BASE_URL=https://integrate.api.nvidia.com/v1
+      - NVIDIA_NIM_MODEL=nvidia/nemotron-3-ultra-550b-a55b
+      - NVIDIA_NIM_TEMPERATURE=0.2
+      - NVIDIA_NIM_MAX_TOKENS=4096
+      - NVIDIA_NIM_TIMEOUT_SECONDS=120
+      - LLM_POLL_INTERVAL_MS=2000
+      - LLM_MAX_CONCURRENT_JOBS=10
+    volumes:
+      - ./src/workers/nim.txt:/app/nim.txt:ro
+    depends_on:
+      sequin_redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
