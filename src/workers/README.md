@@ -1,11 +1,8 @@
 # MugikoWorkServer
 
-Worker process with two background threads:
-
-- **Subtitle worker** — consumes job messages from Redis and executes them
-  through a fixed five-layer pipeline.
-- **LLM worker** — polls the `llm_jobs` table for queued jobs and executes them
-  through NVIDIA NIM's OpenAI-compatible chat completions API.
+Subtitle worker (Python). Consumes job messages from Redis and executes them
+through a fixed five-layer pipeline. The LLM worker has been moved to a
+separate Go service at `src/llm-worker/`; this worker is **subtitle-only**.
 
 The subtitle pipeline:
 
@@ -23,6 +20,11 @@ Providers and processors never call anything. The listener only knows the
 orchestrator. A one-time bootstrap (startup registry sync → DB) is wired in
 `src/main.py`.
 
+**Important:** Progress is no longer published directly by this worker. Every
+DB status write is captured by Sequin CDC, routed to `subtitle_progress`, and
+consumed by the Go cache updater which writes `subtitle:progress:<id>` with a
+24h TTL and publishes via Pub/Sub.
+
 Currently one service exists: **YouTube → Japanese subtitles** (`youtube_ja`)
 via yt-dlp in YouTube's native **json3** format — JSON in, JSON out. The
 processor **tokenizes** each cue (Janome morphological analysis) and stores
@@ -34,7 +36,7 @@ video skip yt-dlp entirely.
 
 ```
 src/
-├── main.py                    # entrypoint: wiring, registry sync, run
+├── main.py                    # entrypoint: wiring, registry sync, run (subtitle only)
 ├── config.py                  # env config (see .env.example)
 ├── logging_setup.py
 ├── listener.py                # layer 1: consumer group + XACK + reclaim
@@ -73,8 +75,7 @@ if missing, reclaims pending messages from crashed consumers, then loops.
 (`src/common/threads.py`) that blocks on its Redis stream indefinitely; the
 main thread just keeps the process alive. Ctrl+C asks listeners to stop and
 joins them for up to `READ_BLOCK_MS + 5s`; unacknowledged messages are
-recovered later via `XAUTOCLAIM`. Adding a future service means constructing
-one more listener and appending one more `WorkerThread`.
+recovered later via `XAUTOCLAIM`.
 
 ## Smoke test (end to end)
 
@@ -108,32 +109,13 @@ SELECT status FROM subtitles WHERE id = '<uuid>';          -- completed
 SELECT count(*) FROM subtitle_segments WHERE subtitle_id = '<uuid>';
 ```
 
-## Subtitle status stream
+## Subtitle progress (via Sequin CDC + cache updater)
 
-Every status transition is also published to the Redis stream configured by
-`STATUS_STREAM` (default `subtitle_status`) as `{id, status}`. The API layer's
-SSE endpoint reads this stream. Publishing is best-effort: a Redis failure is
-logged and never fails the subtitle job.
-
-## LLM jobs (NVIDIA NIM)
-
-The LLM thread polls `llm_jobs` for `queued` rows, claims one with
-`FOR UPDATE SKIP LOCKED`, calls NVIDIA NIM, and writes `response`, `status`, and
-`error` back to the row. Stale `processing` rows are requeued after
-`LLM_STALE_PROCESSING_SECONDS`.
-
-Every LLM status transition is also published to the Redis stream configured by
-`LLM_STATUS_STREAM` (default `llm_status`) as `{id, status}`, matching the
-subtitle status stream. The API layer's SSE endpoint reads this stream. A stale
-job moved back to `queued` is published as `queued` too.
-
-API keys are read from `NVIDIA_API_KEYS_FILE` (default `nim.txt`), one key per
-line, and used round-robin. The key file is not committed to git. There is no
-environment-key fallback; transient NIM HTTP errors are retried with the same
-key.
-
-In Docker, the key file is mounted read-only at `/app/nim.txt` rather than baked
-into the image, so the same image can be pushed without exposing keys.
+Every status transition on `subtitles` is captured by Sequin CDC, routed to
+the `subtitle_progress` stream, and consumed by the Go cache updater which
+writes `subtitle:progress:<id>` (JSON snapshot, 24h TTL) and publishes via
+Pub/Sub on the same key. This worker no longer publishes status directly —
+progress is derived from DB writes.
 
 ## Status flow & guarantees
 
@@ -145,9 +127,7 @@ into the image, so the same image can be pushed without exposing keys.
   and segment replaces delete-then-insert in one transaction.
 - Job-level failures (`NoSubtitlesAvailable`, unknown provider/service, invalid
   job id, malformed message) are recorded on the job and acknowledged — a
-  poison message never wedges the group. The sample `OpenSubtitles` messages
-  from `doc/stream_res.txt` therefore get `status='failed'` until such a
-  provider is implemented.
+  poison message never wedges the group.
 
 ## Subtitle cache (Redis)
 
