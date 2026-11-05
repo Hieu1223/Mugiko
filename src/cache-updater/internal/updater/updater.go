@@ -12,13 +12,14 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const progressTTL = 24 * time.Hour
+const defaultProgressTTL = 24 * time.Hour
 
 type Updater struct {
 	redis    *redis.Client
 	streams  []string
 	group    string
 	consumer string
+	ttl      time.Duration
 }
 
 func NewFromEnv() (*Updater, error) {
@@ -44,11 +45,35 @@ func NewFromEnv() (*Updater, error) {
 	if consumer == "" {
 		consumer = "cache-updater-1"
 	}
-	return &Updater{redis: client, streams: streams, group: group, consumer: consumer}, nil
+	ttl := defaultProgressTTL
+	if v := os.Getenv("PROGRESS_TTL_SECONDS"); v != "" {
+		var secs int
+		fmt.Sscanf(v, "%d", &secs)
+		if secs > 0 {
+			ttl = time.Duration(secs) * time.Second
+		}
+	}
+
+	log.Printf(
+		"cache updater: configured streams=%v group=%q consumer=%q ttl=%s",
+		streams, group, consumer, ttl,
+	)
+
+	return &Updater{
+		redis:    client,
+		streams:  streams,
+		group:    group,
+		consumer: consumer,
+		ttl:      ttl,
+	}, nil
 }
 
 func groupMissing(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "NOGROUP")
+}
+
+func streamMissing(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no such key")
 }
 
 // ensureGroups creates every stream (if missing) and its consumer group
@@ -56,30 +81,31 @@ func groupMissing(err error) bool {
 // XGROUP CREATE to register the consumer group at the beginning.
 func (u *Updater) ensureGroups(ctx context.Context) error {
 	for _, stream := range u.streams {
-		err := u.redis.XGroupCreateMkStream(
-			ctx,
-			stream,
-			u.group,
-			"0",
-		).Err()
+		// Materialize the stream with a dummy entry if it doesn't exist yet.
+		if _, err := u.redis.XAdd(ctx, &redis.XAddArgs{
+			Stream: stream,
+			Values: map[string]any{"__init": "1"},
+		}).Result(); err != nil {
+			return fmt.Errorf("xadd stream %s: %w", stream, err)
+		}
 
-		if err != nil {
+		// Create the consumer group at the beginning of the stream.
+		if _, err := u.redis.Do(ctx, "XGROUP", "CREATE", stream, u.group, "0").Result(); err != nil {
 			if strings.Contains(err.Error(), "BUSYGROUP") {
+				log.Printf(
+					"cache updater: consumer group %q already exists on stream %q",
+					u.group, stream,
+				)
 				continue
 			}
-
 			return fmt.Errorf(
-				"create consumer group %s on stream %s: %w",
-				u.group,
-				stream,
-				err,
+				"xgroup create %q %q: %w", stream, u.group, err,
 			)
 		}
 
 		log.Printf(
-			"cache updater: created consumer group %s on stream %s",
-			u.group,
-			stream,
+			"cache updater: created stream %q and consumer group %q at ID 0",
+			stream, u.group,
 		)
 	}
 
@@ -87,35 +113,33 @@ func (u *Updater) ensureGroups(ctx context.Context) error {
 }
 
 func (u *Updater) Run(ctx context.Context) error {
-	// Initialize consumer groups before starting consumers.
-	initialized := false
+	log.Printf(
+		"cache updater: starting consumer loop on %d stream(s)",
+		len(u.streams),
+	)
 
+	// Initialize consumer groups before starting consumers.
 	for attempt := 1; attempt <= 30; attempt++ {
 		if err := u.ensureGroups(ctx); err == nil {
-			initialized = true
+			log.Printf("cache updater: consumer groups ready")
 			break
 		} else {
 			log.Printf(
-				"cache updater: initialization failed (attempt %d/30): %v",
-				attempt,
-				err,
+				"cache updater: waiting for redis (attempt %d/30): %v",
+				attempt, err,
 			)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(2 * time.Second):
+			}
 		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(2 * time.Second):
-		}
-	}
-
-	if !initialized {
-		return fmt.Errorf("failed to initialize Redis consumer groups")
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
+			log.Printf("cache updater: context cancelled, shutting down")
 			return ctx.Err()
 		default:
 		}
@@ -142,11 +166,8 @@ func (u *Updater) Run(ctx context.Context) error {
 				if groupMissing(err) {
 					log.Printf(
 						"cache updater: consumer group missing: stream=%q group=%q error=%v",
-						streamName,
-						u.group,
-						err,
+						streamName, u.group, err,
 					)
-
 					if initErr := u.ensureGroups(ctx); initErr != nil {
 						log.Printf(
 							"cache updater: group recovery failed: %v",
@@ -154,18 +175,13 @@ func (u *Updater) Run(ctx context.Context) error {
 						)
 						time.Sleep(time.Second)
 					}
-
 					continue
 				}
 
 				log.Printf(
 					"cache updater: XREADGROUP failed: stream=%q group=%q consumer=%q error=%v",
-					streamName,
-					u.group,
-					u.consumer,
-					err,
+					streamName, u.group, u.consumer, err,
 				)
-
 				time.Sleep(time.Second)
 				continue
 			}
@@ -182,9 +198,7 @@ func (u *Updater) Run(ctx context.Context) error {
 						).Err(); err != nil {
 							log.Printf(
 								"cache updater: dummy message ack failed: stream=%s id=%s error=%v",
-								stream.Stream,
-								msg.ID,
-								err,
+								stream.Stream, msg.ID, err,
 							)
 						}
 						continue
@@ -193,9 +207,7 @@ func (u *Updater) Run(ctx context.Context) error {
 					if err := u.handle(ctx, stream.Stream, msg); err != nil {
 						log.Printf(
 							"cache updater: handle failed: stream=%s id=%s error=%v",
-							stream.Stream,
-							msg.ID,
-							err,
+							stream.Stream, msg.ID, err,
 						)
 						continue
 					}
@@ -208,9 +220,7 @@ func (u *Updater) Run(ctx context.Context) error {
 					).Err(); err != nil {
 						log.Printf(
 							"cache updater: ack failed: stream=%s id=%s error=%v",
-							stream.Stream,
-							msg.ID,
-							err,
+							stream.Stream, msg.ID, err,
 						)
 					}
 				}
@@ -237,23 +247,27 @@ func (u *Updater) handle(ctx context.Context, stream string, msg redis.XMessage)
 	}
 	b, err := json.Marshal(snapshot)
 	if err != nil {
-		return err
+		return fmt.Errorf("json marshal snapshot: %w", err)
 	}
 
-	ttl := progressTTL
-	if v := os.Getenv("PROGRESS_TTL_SECONDS"); v != "" {
-		var secs int
-		fmt.Sscanf(v, "%d", &secs)
-		if secs > 0 {
-			ttl = time.Duration(secs) * time.Second
-		}
-	}
+	ttl := u.ttl
 
 	pipe := u.redis.TxPipeline()
 	pipe.Set(ctx, key, string(b), ttl)
 	pipe.Publish(ctx, key, string(b))
 	_, err = pipe.Exec(ctx)
-	return err
+	if err != nil {
+		return fmt.Errorf("redis set+publish key %q: %w", key, err)
+	}
+
+	log.Printf(
+		"cache updater: progress key=%q ttl=%s status=%s entity_type=%s entity_id=%s",
+		key, ttl,
+		toString(msg.Values["status"]),
+		entityType, entityID,
+	)
+
+	return nil
 }
 
 func streamPrefix(stream string) string {
