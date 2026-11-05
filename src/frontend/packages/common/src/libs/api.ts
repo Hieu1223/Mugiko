@@ -1,4 +1,9 @@
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/+$/, '')
+const rawApiBase = import.meta.env.VITE_API_BASE_URL || '/api/v1'
+// Always use a relative path so the frontend works behind any reverse proxy
+// without CORS or origin mismatches. Strip protocol+host if accidentally set.
+const API_BASE = rawApiBase
+  .replace(/^https?:\/\/[^/]+/, '')
+  .replace(/\/+$/, '') || '/api/v1'
 
 let authToken: string | null = null
 let unauthorizedHandler: (() => void) | null = null
