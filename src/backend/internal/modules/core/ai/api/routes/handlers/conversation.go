@@ -73,8 +73,13 @@ func (h *ConversationHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	msgs, _ := h.repo.ListMessages(id)
+	// Return conversation with messages embedded, matching frontend Conversation type.
+	type conversationWithMessages struct {
+		*aipersistent.Conversation
+		Messages []aipersistent.Message `json:"messages"`
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"conversation": c, "messages": msgs})
+	json.NewEncoder(w).Encode(conversationWithMessages{Conversation: c, Messages: msgs})
 }
 
 func (h *ConversationHandler) Delete(w http.ResponseWriter, r *http.Request) {

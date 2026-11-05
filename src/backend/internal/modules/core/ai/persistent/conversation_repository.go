@@ -56,7 +56,7 @@ func (r *ConversationRepository) ListByUser(userID string) ([]Conversation, erro
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Conversation
+	out := make([]Conversation, 0)
 	for rows.Next() {
 		var c Conversation
 		var id string
@@ -126,7 +126,7 @@ func (r *ConversationRepository) ListMessages(convID uuid.UUID) ([]Message, erro
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Message
+	out := make([]Message, 0)
 	for rows.Next() {
 		var m Message
 		var id, cid string

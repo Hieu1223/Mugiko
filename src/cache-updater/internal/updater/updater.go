@@ -51,20 +51,68 @@ func groupMissing(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "NOGROUP")
 }
 
-func (u *Updater) ensureGroup(ctx context.Context, stream string) error {
-	// XGROUP CREATE stream group 0 MKSTREAM — creates the stream if missing,
-	// then creates the consumer group at the beginning.
-	_, err := u.redis.Do(ctx, "XGROUP", "CREATE", stream, u.group, "0", "MKSTREAM").Result()
-	if err != nil {
-		if strings.Contains(err.Error(), "BUSYGROUP") {
-			return nil
+// ensureGroups creates every stream (if missing) and its consumer group
+// before any reads happen. Uses XADD to materialize the stream, then
+// XGROUP CREATE to register the consumer group at the beginning.
+func (u *Updater) ensureGroups(ctx context.Context) error {
+	for _, stream := range u.streams {
+		err := u.redis.XGroupCreateMkStream(
+			ctx,
+			stream,
+			u.group,
+			"0",
+		).Err()
+
+		if err != nil {
+			if strings.Contains(err.Error(), "BUSYGROUP") {
+				continue
+			}
+
+			return fmt.Errorf(
+				"create consumer group %s on stream %s: %w",
+				u.group,
+				stream,
+				err,
+			)
 		}
-		return err
+
+		log.Printf(
+			"cache updater: created consumer group %s on stream %s",
+			u.group,
+			stream,
+		)
 	}
+
 	return nil
 }
 
 func (u *Updater) Run(ctx context.Context) error {
+	// Initialize consumer groups before starting consumers.
+	initialized := false
+
+	for attempt := 1; attempt <= 30; attempt++ {
+		if err := u.ensureGroups(ctx); err == nil {
+			initialized = true
+			break
+		} else {
+			log.Printf(
+				"cache updater: initialization failed (attempt %d/30): %v",
+				attempt,
+				err,
+			)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+
+	if !initialized {
+		return fmt.Errorf("failed to initialize Redis consumer groups")
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -72,49 +120,99 @@ func (u *Updater) Run(ctx context.Context) error {
 		default:
 		}
 
-		// Ensure consumer groups exist on every stream before reading.
-		for _, s := range u.streams {
-			if err := u.ensureGroup(ctx, s); err != nil {
-				log.Printf("cache updater: create group %s on %s: %v", u.group, s, err)
-			}
-		}
+		// Read each stream individually to isolate errors.
+		for _, streamName := range u.streams {
+			res, err := u.redis.XReadGroup(ctx, &redis.XReadGroupArgs{
+				Group:    u.group,
+				Consumer: u.consumer,
+				Streams:  []string{streamName, ">"},
+				Count:    10,
+				Block:    5 * time.Second,
+			}).Result()
 
-		streamArgs := []string{}
-		for _, s := range u.streams {
-			streamArgs = append(streamArgs, s, ">")
-		}
-		res, err := u.redis.XReadGroup(ctx, &redis.XReadGroupArgs{
-			Group:    u.group,
-			Consumer: u.consumer,
-			Streams:  streamArgs,
-			Count:    10,
-			Block:    5 * time.Second,
-		}).Result()
-		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			if err == redis.Nil {
-				time.Sleep(100 * time.Millisecond)
-				continue
-			}
-			if groupMissing(err) {
-				log.Printf("cache updater: group missing, retrying: %v", err)
-				time.Sleep(1 * time.Second)
-				continue
-			}
-			log.Printf("cache updater read failed: %v", err)
-			time.Sleep(time.Second)
-			continue
-		}
-		for _, stream := range res {
-			for _, msg := range stream.Messages {
-				if err := u.handle(ctx, stream.Stream, msg); err != nil {
-					log.Printf("cache updater handle failed: %v", err)
+			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+
+				if err == redis.Nil {
 					continue
 				}
-				if err := u.redis.XAck(ctx, stream.Stream, u.group, msg.ID).Err(); err != nil {
-					log.Printf("cache updater ack failed: %v", err)
+
+				if groupMissing(err) {
+					log.Printf(
+						"cache updater: consumer group missing: stream=%q group=%q error=%v",
+						streamName,
+						u.group,
+						err,
+					)
+
+					if initErr := u.ensureGroups(ctx); initErr != nil {
+						log.Printf(
+							"cache updater: group recovery failed: %v",
+							initErr,
+						)
+						time.Sleep(time.Second)
+					}
+
+					continue
+				}
+
+				log.Printf(
+					"cache updater: XREADGROUP failed: stream=%q group=%q consumer=%q error=%v",
+					streamName,
+					u.group,
+					u.consumer,
+					err,
+				)
+
+				time.Sleep(time.Second)
+				continue
+			}
+
+			for _, stream := range res {
+				for _, msg := range stream.Messages {
+					// Skip initialization dummy entries.
+					if _, ok := msg.Values["__init"]; ok {
+						if err := u.redis.XAck(
+							ctx,
+							stream.Stream,
+							u.group,
+							msg.ID,
+						).Err(); err != nil {
+							log.Printf(
+								"cache updater: dummy message ack failed: stream=%s id=%s error=%v",
+								stream.Stream,
+								msg.ID,
+								err,
+							)
+						}
+						continue
+					}
+
+					if err := u.handle(ctx, stream.Stream, msg); err != nil {
+						log.Printf(
+							"cache updater: handle failed: stream=%s id=%s error=%v",
+							stream.Stream,
+							msg.ID,
+							err,
+						)
+						continue
+					}
+
+					if err := u.redis.XAck(
+						ctx,
+						stream.Stream,
+						u.group,
+						msg.ID,
+					).Err(); err != nil {
+						log.Printf(
+							"cache updater: ack failed: stream=%s id=%s error=%v",
+							stream.Stream,
+							msg.ID,
+							err,
+						)
+					}
 				}
 			}
 		}
@@ -126,9 +224,6 @@ func (u *Updater) handle(ctx context.Context, stream string, msg redis.XMessage)
 	entityID := toString(msg.Values["entity_id"])
 	if entityType == "" {
 		entityType = streamPrefix(stream)
-	}
-	if entityID == "" {
-		entityID = toString(msg.Values["id"])
 	}
 	if entityID == "" {
 		return fmt.Errorf("missing entity_id in %s", stream)

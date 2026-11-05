@@ -619,7 +619,7 @@ export function AIPage() {
                     </Button>
                   </div>
                   <ul className="conversation-list">
-                    {conversations.map((conv) => (
+                    {(conversations || []).map((conv) => (
                       <li
                         key={conv.id}
                         className={`conversation-item ${activeConversation?.id === conv.id ? 'active' : ''}`}

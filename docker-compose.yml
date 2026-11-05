@@ -1,3 +1,4 @@
+
 services:
   postgres:
     image: postgres:15-alpine
@@ -39,6 +40,53 @@ services:
       timeout: 3s
       retries: 10
       start_period: 5s
+
+  # Initialize Redis streams and consumer groups before workers start.
+  redis-init:
+    image: redis:7-alpine
+    container_name: mugiko_redis_init
+    restart: "no"
+    depends_on:
+      sequin_redis:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+
+        create_group() {
+          stream="$$1"
+          group="$$2"
+
+          echo "Initializing stream=$$stream group=$$group"
+
+          if redis-cli -h sequin_redis XGROUP CREATE "$$stream" "$$group" 0 MKSTREAM 2>&1; then
+            echo "Created group $$group on $$stream"
+          else
+            # Only treat BUSYGROUP as success.
+            if redis-cli -h sequin_redis XINFO GROUPS "$$stream" 2>/dev/null |
+              grep -q "name=$$group"; then
+              echo "Group $$group already exists on $$stream"
+            else
+              echo "Failed to initialize $$group on $$stream"
+              exit 1
+            fi
+          fi
+        }
+
+        # Subtitle worker
+        create_group subtitle_queue subtitle-workers
+
+        # Cache updater
+        create_group chat_progress cache-updater
+        create_group llm_progress cache-updater
+        create_group subtitle_progress cache-updater
+
+        # LLM worker
+        create_group chat_jobs llm-workers
+        create_group llm_jobs llm-workers
+
+        echo "Redis initialization completed."
 
   sequin:
     image: sequin/sequin:latest
@@ -133,8 +181,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      sequin_redis:
-        condition: service_healthy
+      redis-init:
+        condition: service_completed_successfully
 
   # Go cache updater: consumes progress streams, writes Redis keys (24h TTL) + Pub/Sub.
   cache-updater:
@@ -150,8 +198,8 @@ services:
       CONSUMER_NAME: cache-updater-1
       PROGRESS_TTL_SECONDS: "86400"
     depends_on:
-      sequin_redis:
-        condition: service_healthy
+      redis-init:
+        condition: service_completed_successfully
 
   # Go LLM Work Server: consumes chat/LLM job streams, calls NIM, persists results.
   llm-worker:
@@ -182,8 +230,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      sequin_redis:
-        condition: service_healthy
+      redis-init:
+        condition: service_completed_successfully
 
 volumes:
   postgres_data:

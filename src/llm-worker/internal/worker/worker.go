@@ -215,19 +215,42 @@ func loadAPIKeys(path string) ([]string, error) {
 	return keys, nil
 }
 
-func (w *Worker) ensureGroup(ctx context.Context, stream string) error {
-	_, err := w.redis.Do(ctx, "XGROUP", "CREATE", stream, w.cfg.ConsumerGroup, "0", "MKSTREAM").Result()
-	if err != nil {
-		if strings.Contains(err.Error(), "BUSYGROUP") {
-			return nil
+func (w *Worker) ensureGroups(ctx context.Context) error {
+	for _, s := range []string{w.cfg.ChatJobsStream, w.cfg.LLMJobsStream} {
+		// Create the stream if it doesn't exist.
+		if _, err := w.redis.XAdd(ctx, &redis.XAddArgs{
+			Stream: s,
+			Values: map[string]any{"__init": "1"},
+		}).Result(); err != nil {
+			return fmt.Errorf("xadd %s: %w", s, err)
 		}
-		return err
+		// Create the consumer group at the beginning of the stream.
+		if _, err := w.redis.Do(ctx, "XGROUP", "CREATE", s, w.cfg.ConsumerGroup, "0").Result(); err != nil {
+			if strings.Contains(err.Error(), "BUSYGROUP") {
+				continue
+			}
+			return fmt.Errorf("xgroup create %s %s: %w", s, w.cfg.ConsumerGroup, err)
+		}
 	}
 	return nil
 }
 
 func (w *Worker) Run(ctx context.Context) error {
 	streams := []string{w.cfg.ChatJobsStream, w.cfg.LLMJobsStream}
+
+	// Create consumer groups up front, with retries so Redis/Sequin have time
+	// to be ready before we start reading.
+	for attempt := 1; attempt <= 30; attempt++ {
+		if err := w.ensureGroups(ctx); err == nil {
+			break
+		}
+		log.Printf("llm worker: waiting for redis streams (attempt %d/30)", attempt)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
 
 	for {
 		select {
@@ -236,54 +259,59 @@ func (w *Worker) Run(ctx context.Context) error {
 		default:
 		}
 
-		// Ensure consumer groups exist on every stream before reading.
+		// Read one stream at a time to avoid multi-stream XREADGROUP formatting issues.
+		blockMs := w.cfg.ReadBlockMs / len(streams)
+		if blockMs == 0 {
+			blockMs = 1000
+		}
+		blockPerStream := time.Duration(blockMs) * time.Millisecond
 		for _, s := range streams {
-			if err := w.ensureGroup(ctx, s); err != nil {
-				log.Printf("llm worker: create group %s on %s: %v", w.cfg.ConsumerGroup, s, err)
-			}
-		}
-
-		if err := w.reclaimStale(ctx); err != nil {
-			log.Printf("llm worker: reclaim stale failed: %v", err)
-		}
-
-		streamArgs := []string{}
-		for _, s := range streams {
-			streamArgs = append(streamArgs, s, ">")
-		}
-		res, err := w.redis.XReadGroup(ctx, &redis.XReadGroupArgs{
-			Group:    w.cfg.ConsumerGroup,
-			Consumer: w.cfg.ConsumerName,
-			Streams:  streamArgs,
-			Count:    5,
-			Block:    time.Duration(w.cfg.ReadBlockMs) * time.Millisecond,
-		}).Result()
-		if err != nil {
-			if ctx.Err() != nil {
+			select {
+			case <-ctx.Done():
 				return ctx.Err()
+			default:
 			}
-			if err == redis.Nil {
-				continue
-			}
-			if groupMissing(err) {
-				log.Printf("llm worker: group missing, retrying: %v", err)
-				time.Sleep(1 * time.Second)
-				continue
-			}
-			log.Printf("llm worker: xreadgroup failed: %v", err)
-			time.Sleep(time.Second)
-			continue
-		}
-		for _, stream := range res {
-			for _, msg := range stream.Messages {
-				if err := w.handleJob(ctx, stream.Stream, msg); err != nil {
-					log.Printf("llm worker: handle job %s on %s: %v", msg.ID, stream.Stream, err)
+			res, err := w.redis.XReadGroup(ctx, &redis.XReadGroupArgs{
+				Group:    w.cfg.ConsumerGroup,
+				Consumer: w.cfg.ConsumerName,
+				Streams:  []string{s, ">"},
+				Count:    5,
+				Block:    blockPerStream,
+			}).Result()
+			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				if err == redis.Nil {
 					continue
 				}
-				if err := w.redis.XAck(ctx, stream.Stream, w.cfg.ConsumerGroup, msg.ID).Err(); err != nil {
-					log.Printf("llm worker: ack %s on %s: %v", msg.ID, stream.Stream, err)
+				if groupMissing(err) {
+					log.Printf("llm worker: group missing on %s, recreating: %v", s, err)
+					_ = w.ensureGroups(ctx)
+					continue
+				}
+				log.Printf("llm worker: xreadgroup failed on %s: %v", s, err)
+				continue
+			}
+			for _, stream := range res {
+				for _, msg := range stream.Messages {
+					// Skip __init dummy entries used only to create the stream.
+					if _, ok := msg.Values["__init"]; ok {
+						_ = w.redis.XAck(ctx, s, w.cfg.ConsumerGroup, msg.ID)
+						continue
+					}
+					if err := w.handleJob(ctx, s, msg); err != nil {
+						log.Printf("llm worker: handle job %s on %s: %v", msg.ID, s, err)
+						continue
+					}
+					if err := w.redis.XAck(ctx, s, w.cfg.ConsumerGroup, msg.ID).Err(); err != nil {
+						log.Printf("llm worker: ack %s on %s: %v", msg.ID, s, err)
+					}
 				}
 			}
+		}
+		if err := w.reclaimStale(ctx); err != nil {
+			log.Printf("llm worker: reclaim stale failed: %v", err)
 		}
 	}
 }
