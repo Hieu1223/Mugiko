@@ -6,15 +6,14 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /mugiko-api ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build -o /app/mugiko-api ./cmd/server
 
 FROM alpine:3.18
 
 RUN apk --no-cache add ca-certificates
 
 WORKDIR /app
-
-COPY --from=builder /mugiko-api .
+COPY --from=builder /app/mugiko-api .
 COPY asset/ ./asset/
 
 EXPOSE 8080

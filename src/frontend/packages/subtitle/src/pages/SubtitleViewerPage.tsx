@@ -76,6 +76,13 @@ export function SubtitleViewerPage() {
 
   useDocumentTitle('Subtitle viewer')
 
+  // A viewer URL without a valid subtitle ID is a stale or malformed link.
+  // Go back to the library instead of leaving e.g. `subtitleId=index.html`
+  // in the address bar or requesting `/api/v1/subtitles/index.html`.
+  useEffect(() => {
+    if (!subtitleId) window.location.replace('/subtitle/')
+  }, [subtitleId])
+
   useEffect(() => {
     document.body.classList.add('watch-page')
     return () => document.body.classList.remove('watch-page')

@@ -96,3 +96,18 @@ export async function deleteConversation(id: string): Promise<void> {
 export async function chatCompletion(payload: ChatRequest): Promise<ChatResponse> {
   return apiFetch<ChatResponse>('/ai/chat/completions', { method: 'POST', body: payload })
 }
+
+export async function addMessage(conversationId: string, role: string, content: string): Promise<Message> {
+  return apiFetch<Message>(`/ai/conversations/${conversationId}/messages`, { method: 'POST', body: { role, content } })
+}
+
+export async function streamMessageProgress(
+  conversationId: string,
+  messageId: string,
+  onEvent: (data: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  await streamServerEvents(`/ai/conversations/${conversationId}/messages/${messageId}/progress`, { signal }, (event) => {
+    onEvent(event.data)
+  })
+}

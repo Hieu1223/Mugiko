@@ -1,13 +1,20 @@
-import { lazy, Suspense, useMemo, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, type ReactNode } from 'react'
 import {
   DeckDetailPage,
   DecksPage,
   LookupPage,
-  PageProvider,
-  readRouteParams,
   Shell,
+  isUuid,
+  useParams,
+  useSearchParams,
   type SiteNav,
 } from '@mugiko/common'
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+} from 'react-router-dom'
 import { HomePage } from './pages/HomePage'
 import { NotFoundPage } from './pages/NotFoundPage'
 
@@ -72,41 +79,176 @@ const webnovelNav: SiteNav = {
 
 const SITE_NAVS: SiteNav[] = [subtitleNav, webnovelNav]
 
-interface PageDefinition {
-  render: () => ReactNode
+function activePageFor(rawPathname: string): string {
+  const pathname = rawPathname.replace(/\/+$/, '') || '/'
+
+  if (pathname === '/') return 'home'
+  if (pathname === '/ai') return 'ai'
+  if (pathname === '/lookup') return 'lookup'
+  if (pathname === '/decks') return 'decks'
+  if (pathname.startsWith('/decks/')) return 'deck-detail'
+
+  if (pathname === '/subtitle') return 'subtitle-home'
+  if (pathname === '/subtitle/providers') return 'subtitle-providers'
+  if (pathname === '/subtitle/history') return 'subtitle-history'
+  if (pathname === '/subtitle/settings') return 'subtitle-settings'
+  if (pathname.startsWith('/subtitle/')) return 'subtitle-viewer'
+
+  if (pathname === '/webnovel') return 'webnovel-home'
+  if (pathname === '/webnovel/add') return 'webnovel-add'
+  if (pathname === '/webnovel/search') return 'webnovel-search'
+  if (pathname.startsWith('/webnovel/chapters/')) return 'webnovel-reader'
+  if (pathname.startsWith('/webnovel/')) return 'webnovel-detail'
+
+  return 'not-found'
 }
 
-const PAGES: Record<string, PageDefinition> = {
-  home: { render: () => <HomePage /> },
-  lookup: { render: () => <LookupPage /> },
-  decks: { render: () => <DecksPage /> },
-  'deck-detail': { render: () => <DeckDetailPage /> },
-  'subtitle-home': { render: () => <SubtitleHomePage /> },
-  'subtitle-viewer': { render: () => <SubtitleViewerPage /> },
-  'subtitle-providers': { render: () => <SubtitleProvidersPage /> },
-  'subtitle-history': { render: () => <SubtitleHistoryPage /> },
-  'subtitle-settings': { render: () => <SubtitleSettingsPage /> },
-  'webnovel-home': { render: () => <WebNovelHomePage /> },
-  'webnovel-add': { render: () => <WebNovelAddPage /> },
-  'webnovel-search': { render: () => <WebNovelSearchPage /> },
-  'webnovel-detail': { render: () => <WebNovelDetailPage /> },
-  'webnovel-reader': { render: () => <WebNovelReaderPage /> },
-  ai: { render: () => <AIPage /> },
-  'not-found': { render: () => <NotFoundPage /> },
+function RequireUuid({
+  param,
+  redirectTo,
+  children,
+}: {
+  param: string
+  redirectTo: string
+  children: ReactNode
+}) {
+  const params = useParams()
+  if (!isUuid(params[param])) return <Navigate to={redirectTo} replace />
+  return <>{children}</>
 }
 
-export function App({ page }: { page: string }) {
-  const resolvedPage = PAGES[page] ? page : 'not-found'
-  const definition = PAGES[resolvedPage]
-  const params = useMemo(readRouteParams, [])
+function LegacyQueryRedirect({
+  param,
+  fallback,
+  build,
+}: {
+  param: string
+  fallback: string
+  build: (id: string) => string
+}) {
+  const [search] = useSearchParams()
+  const id = search.get(param)
+  return <Navigate to={id && isUuid(id) ? build(id) : fallback} replace />
+}
+
+function CatchAllPage() {
+  const { pathname } = useLocation()
+  if (pathname.endsWith('/index.html')) {
+    const target = pathname.replace(/\/index\.html$/, '') || '/'
+    return <Navigate to={target} replace />
+  }
+  return <NotFoundPage />
+}
+
+function ScrollToTop() {
+  const { pathname } = useLocation()
+  useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [pathname])
+  return null
+}
+
+export function App() {
+  const location = useLocation()
 
   return (
-    <PageProvider page={resolvedPage} params={params}>
-      <Shell siteNavs={SITE_NAVS} activePage={resolvedPage}>
+    <>
+      <ScrollToTop />
+      <Shell siteNavs={SITE_NAVS} activePage={activePageFor(location.pathname)}>
         <Suspense fallback={<p className="status">Loading…</p>}>
-          {definition.render()}
+          <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/ai" element={<AIPage />} />
+            <Route path="/lookup" element={<LookupPage />} />
+
+            <Route path="/decks" element={<DecksPage />} />
+            <Route
+              path="/decks/detail"
+              element={
+                <LegacyQueryRedirect
+                  param="deckId"
+                  fallback="/decks"
+                  build={(id) => `/decks/${id}`}
+                />
+              }
+            />
+            <Route
+              path="/decks/:deckId"
+              element={
+                <RequireUuid param="deckId" redirectTo="/decks">
+                  <DeckDetailPage />
+                </RequireUuid>
+              }
+            />
+
+            <Route path="/subtitle" element={<SubtitleHomePage />} />
+            <Route path="/subtitle/providers" element={<SubtitleProvidersPage />} />
+            <Route path="/subtitle/history" element={<SubtitleHistoryPage />} />
+            <Route path="/subtitle/settings" element={<SubtitleSettingsPage />} />
+            <Route path="/subtitle/create" element={<Navigate to="/subtitle?create=1" replace />} />
+            <Route
+              path="/subtitle/viewer"
+              element={
+                <LegacyQueryRedirect
+                  param="subtitleId"
+                  fallback="/subtitle"
+                  build={(id) => `/subtitle/${id}`}
+                />
+              }
+            />
+            <Route
+              path="/subtitle/:subtitleId"
+              element={
+                <RequireUuid param="subtitleId" redirectTo="/subtitle">
+                  <SubtitleViewerPage />
+                </RequireUuid>
+              }
+            />
+
+            <Route path="/webnovel" element={<WebNovelHomePage />} />
+            <Route path="/webnovel/add" element={<WebNovelAddPage />} />
+            <Route path="/webnovel/search" element={<WebNovelSearchPage />} />
+            <Route
+              path="/webnovel/detail"
+              element={
+                <LegacyQueryRedirect
+                  param="novelId"
+                  fallback="/webnovel"
+                  build={(id) => `/webnovel/${id}`}
+                />
+              }
+            />
+            <Route
+              path="/webnovel/reader"
+              element={
+                <LegacyQueryRedirect
+                  param="chapterId"
+                  fallback="/webnovel"
+                  build={(id) => `/webnovel/chapters/${id}`}
+                />
+              }
+            />
+            <Route
+              path="/webnovel/chapters/:chapterId"
+              element={
+                <RequireUuid param="chapterId" redirectTo="/webnovel">
+                  <WebNovelReaderPage />
+                </RequireUuid>
+              }
+            />
+            <Route
+              path="/webnovel/:novelId"
+              element={
+                <RequireUuid param="novelId" redirectTo="/webnovel">
+                  <WebNovelDetailPage />
+                </RequireUuid>
+              }
+            />
+
+            <Route path="*" element={<CatchAllPage />} />
+          </Routes>
         </Suspense>
       </Shell>
-    </PageProvider>
+    </>
   )
 }

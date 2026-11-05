@@ -12,10 +12,11 @@ FROM node:20-alpine AS runner
 
 WORKDIR /app
 
-RUN npm install -g serve
+ENV NODE_ENV=production
 
 COPY --from=builder /app/dist /app/dist
+COPY server.mjs ./server.mjs
 
 EXPOSE 3000
 
-CMD ["serve", "-s", "dist", "-l", "3000"]
+CMD ["node", "server.mjs"]

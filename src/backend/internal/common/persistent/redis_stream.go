@@ -24,6 +24,11 @@ var (
 	redisErr    error
 )
 
+// GetRedisClient returns the shared Redis client (initializing it from REDIS_URL).
+func GetRedisClient() (*redis.Client, error) {
+	return getRedisClient()
+}
+
 func getRedisClient() (*redis.Client, error) {
 	redisOnce.Do(func() {
 		redisURL := os.Getenv("REDIS_URL")

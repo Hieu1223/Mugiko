@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"time"
 
 	_ "github.com/lib/pq"
 )
@@ -24,7 +25,21 @@ func InitDB() *sql.DB {
 			log.Fatalf("Failed to open database: %v", err)
 		}
 
-		if err = db.Ping(); err != nil {
+		// Retry Ping with backoff so the service waits for PostgreSQL to be
+		// ready (including schema initialization via docker-entrypoint-initdb.d)
+		// instead of failing fast on a transient connection/auth error.
+		const maxAttempts = 30
+		const retryDelay = 2 * time.Second
+		for attempt := 1; attempt <= maxAttempts; attempt++ {
+			if err = db.Ping(); err == nil {
+				break
+			}
+			log.Printf("Waiting for database to be ready (attempt %d/%d): %v", attempt, maxAttempts, err)
+			select {
+			case <-time.After(retryDelay):
+			}
+		}
+		if err != nil {
 			log.Fatalf("Failed to connect to database: %v", err)
 		}
 

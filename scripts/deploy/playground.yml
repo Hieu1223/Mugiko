@@ -21,7 +21,7 @@ functions:
     description: ""
   - code: |
       def transform(action, record, changes, metadata) do
-        enrichment = metadata[:enrichment] || metadata["enrichment"] || %{} 
+        enrichment = metadata[:enrichment] || metadata["enrichment"] || %{}
 
         %{
           id: record["id"],
@@ -31,6 +31,49 @@ functions:
         }
       end
     name: keep-neccessary
+    type: transform
+    description: ""
+  - code: |
+      def transform(action, record, changes, metadata) do
+        %{
+          id: record["id"],
+          conversation_id: record["conversation_id"],
+          role: record["role"],
+          content: record["content"],
+          status: record["status"],
+          entity_type: "chat",
+          entity_id: record["id"]
+        }
+      end
+    name: chat-job-transform
+    type: transform
+    description: ""
+  - code: |
+      def transform(action, record, changes, metadata) do
+        %{
+          id: record["id"],
+          prompt: record["prompt"],
+          status: record["status"],
+          error: record["error"],
+          created_by: record["created_by"],
+          entity_type: "llm",
+          entity_id: record["id"]
+        }
+      end
+    name: llm-job-transform
+    type: transform
+    description: ""
+  - code: |
+      def transform(action, record, changes, metadata) do
+        %{
+          id: record["id"],
+          status: record["status"],
+          error: record["error"],
+          entity_type: "subtitle",
+          entity_id: record["id"]
+        }
+      end
+    name: subtitle-progress-transform
     type: transform
     description: ""
 sinks:
@@ -62,48 +105,25 @@ sinks:
     active_backfills: []
     routing: none
 
-  - name: mugiko-conversation-messages-sink
+  # Chat job queue: user messages inserted with status=queued feed the LLM Work Server.
+  - name: mugiko-chat-jobs-sink
     status: active
     filter: none
     tables: []
     source:
-      include_table_oids: [26461]
+      include_tables:
+        - public.messages
+    transform: chat-job-transform
     destination:
       port: 6379
       type: redis_stream
       host: sequin_redis
       tls: false
       database: 0
-      stream_key: conversation_messages
-    actions:
-      - insert
-    batch_size: 50
-    database: mugiko
-    annotations: {}
-    timestamp_format: iso8601
-    message_grouping: true
-    max_retry_count: null
-    load_shedding_policy: pause_on_full
-    active_backfills: []
-    routing: none
-
-  - name: mugiko-conversation-changes-sink
-    status: active
-    filter: none
-    tables: []
-    source:
-      include_table_oids: [26444]
-    destination:
-      port: 6379
-      type: redis_stream
-      host: sequin_redis
-      tls: false
-      database: 0
-      stream_key: conversation_changes
+      stream_key: chat_jobs
     actions:
       - insert
       - update
-      - delete
     batch_size: 50
     database: mugiko
     annotations: {}
@@ -114,12 +134,15 @@ sinks:
     active_backfills: []
     routing: none
 
+  # LLM job queue: llm_jobs rows feed the LLM Work Server (legacy path).
   - name: mugiko-llm-jobs-sink
     status: active
     filter: none
     tables: []
     source:
-      include_table_oids: [26648]
+      include_tables:
+        - public.llm_jobs
+    transform: llm-job-transform
     destination:
       port: 6379
       type: redis_stream
@@ -130,7 +153,88 @@ sinks:
     actions:
       - insert
       - update
-      - delete
+    batch_size: 50
+    database: mugiko
+    annotations: {}
+    timestamp_format: iso8601
+    message_grouping: true
+    max_retry_count: null
+    load_shedding_policy: pause_on_full
+    active_backfills: []
+    routing: none
+
+  # Progress streams consumed by the Go cache updater (SET EX + PUBLISH per event).
+  - name: mugiko-chat-progress-sink
+    status: active
+    filter: none
+    tables: []
+    source:
+      include_tables:
+        - public.messages
+    transform: chat-job-transform
+    destination:
+      port: 6379
+      type: redis_stream
+      host: sequin_redis
+      tls: false
+      database: 0
+      stream_key: chat_progress
+    actions:
+      - update
+    batch_size: 50
+    database: mugiko
+    annotations: {}
+    timestamp_format: iso8601
+    message_grouping: true
+    max_retry_count: null
+    load_shedding_policy: pause_on_full
+    active_backfills: []
+    routing: none
+
+  - name: mugiko-llm-progress-sink
+    status: active
+    filter: none
+    tables: []
+    source:
+      include_tables:
+        - public.llm_jobs
+    transform: llm-job-transform
+    destination:
+      port: 6379
+      type: redis_stream
+      host: sequin_redis
+      tls: false
+      database: 0
+      stream_key: llm_progress
+    actions:
+      - update
+    batch_size: 50
+    database: mugiko
+    annotations: {}
+    timestamp_format: iso8601
+    message_grouping: true
+    max_retry_count: null
+    load_shedding_policy: pause_on_full
+    active_backfills: []
+    routing: none
+
+  - name: mugiko-subtitle-progress-sink
+    status: active
+    filter: none
+    tables: []
+    source:
+      include_tables:
+        - public.subtitles
+    transform: subtitle-progress-transform
+    destination:
+      port: 6379
+      type: redis_stream
+      host: sequin_redis
+      tls: false
+      database: 0
+      stream_key: subtitle_progress
+    actions:
+      - update
     batch_size: 50
     database: mugiko
     annotations: {}

@@ -17,4 +17,14 @@ func RegisterLLMRoutes(mux *http.ServeMux, db *sql.DB) {
 	mux.HandleFunc("POST /api/v1/llm-jobs", handler.CreateJob)
 	mux.HandleFunc("GET /api/v1/llm-jobs/{job_id}", handler.GetJob)
 	mux.HandleFunc("GET /api/v1/llm-jobs/{job_id}/status", handler.StreamJobStatus)
+
+	// Conversations
+	convRepo := persistent.NewConversationRepository(db)
+	convHandler := handlers.NewConversationHandler(convRepo)
+	mux.HandleFunc("POST /api/v1/ai/conversations", convHandler.Create)
+	mux.HandleFunc("GET /api/v1/ai/conversations", convHandler.List)
+	mux.HandleFunc("GET /api/v1/ai/conversations/{conversation_id}", convHandler.Get)
+	mux.HandleFunc("DELETE /api/v1/ai/conversations/{conversation_id}", convHandler.Delete)
+	mux.HandleFunc("POST /api/v1/ai/conversations/{conversation_id}/messages", convHandler.AddMessage)
+	mux.HandleFunc("GET /api/v1/ai/conversations/{conversation_id}/messages/{message_id}/progress", convHandler.StreamMessageProgress)
 }

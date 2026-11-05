@@ -99,65 +99,35 @@ services:
       dockerfile: Dockerfile
     container_name: mugiko_frontend
     restart: unless-stopped
-    expose:
-      - "3000"
-    depends_on:
-      api:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 5s
-
-  nginx:
-    image: nginx:alpine
-    container_name: mugiko_nginx
-    restart: unless-stopped
     ports:
-      - "3000:80"
-    volumes:
-      - ./scripts/deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - "3000:3000"
+    environment:
+      API_PROXY_TARGET: http://api:8080
     depends_on:
-      frontend:
-        condition: service_healthy
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
       interval: 30s
       timeout: 3s
       retries: 3
       start_period: 5s
 
-  work-server:
+  subtitle-worker:
     build:
       context: ./src/workers
       dockerfile: Dockerfile
-    container_name: mugiko_work_server
+    container_name: mugiko_subtitle_worker
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/mugiko
       REDIS_URL: redis://sequin_redis:6379/0
       SUBTITLE_STREAM: subtitle_queue
       CONSUMER_GROUP: subtitle-workers
-      CONSUMER_NAME: worker-1
+      CONSUMER_NAME: subtitle-worker-1
       READ_BLOCK_MS: "2000"
       CLAIM_IDLE_MS: "300000"
       SUBTITLE_CACHE_TTL_SECONDS: "604800"
-      STATUS_STREAM: subtitle_status
-      STATUS_STREAM_MAXLEN: "10000"
-      NVIDIA_API_KEYS_FILE: nim.txt
-      NVIDIA_NIM_BASE_URL: https://integrate.api.nvidia.com/v1
-      NVIDIA_NIM_MODEL: nvidia/nemotron-3-ultra-550b-a55b
-      NVIDIA_NIM_TEMPERATURE: "0.2"
-      NVIDIA_NIM_MAX_TOKENS: "4096"
-      NVIDIA_NIM_TIMEOUT_SECONDS: "120"
-      LLM_POLL_INTERVAL_MS: "2000"
-      LLM_STALE_PROCESSING_SECONDS: "900"
-      LLM_STATUS_STREAM: llm_status
-      LLM_STATUS_STREAM_MAXLEN: "10000"
     volumes:
       - ./src/workers/nim.txt:/app/nim.txt:ro
     depends_on:
@@ -166,37 +136,53 @@ services:
       sequin_redis:
         condition: service_healthy
 
-  llm_server:
+  # Go cache updater: consumes progress streams, writes Redis keys (24h TTL) + Pub/Sub.
+  cache-updater:
     build:
-      context: ./src/llm
+      context: ./src/cache-updater
       dockerfile: Dockerfile
-    container_name: mugiko_llm_server
+    container_name: mugiko_cache_updater
     restart: unless-stopped
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/mugiko
-      - REDIS_URL=redis://sequin_redis:6379/0
-      - NVIDIA_API_KEYS_FILE=/app/nim.txt
-      - LLM_CONSUMER_GROUP=llm-workers
-      - LLM_CONSUMER_NAME=worker-1
-      - LLM_INPUT_STREAM=conversation_messages
-      - LLM_JOBS_STREAM=llm_jobs
-      - LLM_OUTPUT_STREAM=llm_responses
-      - LLM_READ_BLOCK_MS=5000
-      - LLM_CLAIM_IDLE_MS=300000
-      - LLM_STREAM_MAXLEN=10000
-      - NVIDIA_NIM_BASE_URL=https://integrate.api.nvidia.com/v1
-      - NVIDIA_NIM_MODEL=nvidia/nemotron-3-ultra-550b-a55b
-      - NVIDIA_NIM_TEMPERATURE=0.2
-      - NVIDIA_NIM_MAX_TOKENS=4096
-      - NVIDIA_NIM_TIMEOUT_SECONDS=120
-      - LLM_POLL_INTERVAL_MS=2000
-      - LLM_MAX_CONCURRENT_JOBS=10
-    volumes:
-      - ./src/workers/nim.txt:/app/nim.txt:ro
+      REDIS_URL: redis://sequin_redis:6379/0
+      PROGRESS_STREAMS: chat_progress,llm_progress,subtitle_progress
+      CONSUMER_GROUP: cache-updater
+      CONSUMER_NAME: cache-updater-1
+      PROGRESS_TTL_SECONDS: "86400"
     depends_on:
       sequin_redis:
         condition: service_healthy
+
+  # Go LLM Work Server: consumes chat/LLM job streams, calls NIM, persists results.
+  llm-worker:
+    build:
+      context: ./src/llm-worker
+      dockerfile: Dockerfile
+    container_name: mugiko_llm_worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/mugiko?sslmode=disable
+      REDIS_URL: redis://sequin_redis:6379/0
+      CONSUMER_GROUP: llm-workers
+      CONSUMER_NAME: llm-worker-1
+      LLM_CHAT_JOBS_STREAM: chat_jobs
+      LLM_JOBS_STREAM: llm_jobs
+      PROGRESS_TTL_SECONDS: "86400"
+      NVIDIA_API_KEYS_FILE: /app/nim.txt
+      NVIDIA_NIM_BASE_URL: https://integrate.api.nvidia.com/v1
+      NVIDIA_NIM_MODEL: nvidia/nemotron-3-ultra-550b-a55b
+      NVIDIA_NIM_TEMPERATURE: "0.2"
+      NVIDIA_NIM_MAX_TOKENS: "4096"
+      NVIDIA_NIM_TIMEOUT_SECONDS: "120"
+      LLM_READ_BLOCK_MS: "5000"
+      LLM_CLAIM_IDLE_MS: "300000"
+      LLM_POLL_INTERVAL_MS: "2000"
+    volumes:
+      - ./src/workers/nim.txt:/app/nim.txt:ro
+    depends_on:
       postgres:
+        condition: service_healthy
+      sequin_redis:
         condition: service_healthy
 
 volumes:

@@ -27,7 +27,8 @@ import {
   listConversations,
   getConversation,
   deleteConversation,
-  chatCompletion,
+  addMessage,
+  streamMessageProgress,
 } from '../libs/llm'
 import type {
   LLMJob,
@@ -73,6 +74,8 @@ export function AIPage() {
   const [chatInput, setChatInput] = useState('')
   const [chatSending, setChatSending] = useState(false)
   const [chatError, setChatError] = useState<string | null>(null)
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null)
+  const [streamAbort, setStreamAbort] = useState<AbortController | null>(null)
   const [newConvTitle, setNewConvTitle] = useState('')
   const [showNewConv, setShowNewConv] = useState(false)
 
@@ -139,7 +142,7 @@ export function AIPage() {
 
   const handleChatSubmit = async () => {
     const text = chatInput.trim()
-    if (!text || !activeConversation || chatSending) return
+    if (!text || !activeConversation || chatSending || streamingMessageId) return
 
     setChatSending(true)
     setChatError(null)
@@ -147,20 +150,83 @@ export function AIPage() {
     setChatInput('')
 
     try {
-      const result = await chatCompletion({
-        conversation_id: activeConversation.id,
-        message: userMessage,
+      const created = await addMessage(activeConversation.id, 'user', userMessage)
+      // Optimistically show the user message while the assistant streams.
+      const optimistic: Message = {
+        ...created,
+        content: userMessage,
+        status: 'queued',
+      }
+      setActiveConversation((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          messages: [...(prev.messages || []), optimistic],
+        }
       })
-      setActiveConversation({
-        ...activeConversation,
-        messages: [...(activeConversation.messages || []), result.user_message, result.assistant_message],
-      })
+
+      setStreamingMessageId(created.id)
+      const controller = new AbortController()
+      setStreamAbort(controller)
+
+      // Stream progress via SSE; fall back to DB reconciliation on close/failure.
+      streamMessageProgress(activeConversation.id, created.id, (data) => {
+        let parsed: any = null
+        try {
+          parsed = JSON.parse(data)
+        } catch {
+          return
+        }
+        if (parsed.status === 'completed') {
+          setStreamAbort(null)
+          setStreamingMessageId(null)
+          loadConversation(activeConversation!.id)
+        } else if (parsed.status === 'failed') {
+          setStreamAbort(null)
+          setStreamingMessageId(null)
+          setChatError(parsed.error || 'The assistant message failed.')
+          setChatSending(false)
+        }
+      }, controller.signal)
+        .catch((err) => {
+          if (controller.signal.aborted) return
+          // Stream closed without a terminal status — reconcile from the DB.
+          setStreamAbort(null)
+          reconcileStreamingMessage(activeConversation!.id, created.id)
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) {
+            setStreamAbort(null)
+            setStreamingMessageId(null)
+          }
+        })
     } catch (err) {
       setChatError(errorDetail(err))
       setChatInput(userMessage)
     } finally {
       setChatSending(false)
     }
+  }
+
+  const reconcileStreamingMessage = async (conversationId: string, messageId: string) => {
+    // Poll the DB a few times for a terminal status before giving up.
+    for (let i = 0; i < 6; i++) {
+      await new Promise((r) => setTimeout(r, 1500))
+      try {
+        const conv = await getConversation(conversationId, 50)
+        setActiveConversation(conv)
+        const msg = (conv.messages || []).find((m) => m.id === messageId)
+        if (msg && (msg.status === 'completed' || msg.status === 'failed')) {
+          if (msg.status === 'failed') {
+            setChatError(msg.error || 'The assistant message failed.')
+          }
+          return
+        }
+      } catch {
+        // Keep retrying.
+      }
+    }
+    setChatError('The assistant message did not reach a terminal status.')
   }
 
   const deleteConv = async (id: string) => {

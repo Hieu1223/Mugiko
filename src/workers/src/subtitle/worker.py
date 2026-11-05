@@ -20,7 +20,7 @@ from .persistent.subtitle_repo import SubtitleRepository
 from .processor.json3 import json3_to_segments
 from .provider import get_provider, get_providers
 from .provider.youtube import NoSubtitlesAvailable
-from .status_stream import SubtitleStatusPublisher
+# Progress is now derived from DB writes via Sequin CDC; no direct publishing.
 
 logger = logging.getLogger(__name__)
 
@@ -67,11 +67,6 @@ def _serve(queue: str, config: SubtitleConfig) -> None:
     try:
         client = redis.Redis.from_url(config.redis_url, decode_responses=True)
         repo = SubtitleRepository(db)
-        publisher = SubtitleStatusPublisher(
-            client,
-            config.status_stream,
-            config.status_stream_maxlen,
-        )
 
         sync_registry(db, get_providers())
         _ensure_group(client, queue, config.consumer_group)
@@ -82,7 +77,6 @@ def _serve(queue: str, config: SubtitleConfig) -> None:
             config.consumer_name,
             config.claim_idle_ms,
             repo,
-            publisher,
         )
 
         logger.info(
@@ -114,21 +108,12 @@ def _serve(queue: str, config: SubtitleConfig) -> None:
                     config.consumer_name,
                     config.claim_idle_ms,
                     repo,
-                    publisher,
                 )
                 continue
 
             for _stream_name, messages in response:
                 for message_id, fields in messages:
-                    _handle_message(
-                        client,
-                        queue,
-                        config.consumer_group,
-                        message_id,
-                        fields,
-                        repo,
-                        publisher,
-                    )
+                    _handle_message(client, queue, config.consumer_group, message_id, fields, repo)
     finally:
         if client is not None:
             client.close()
@@ -157,7 +142,6 @@ def _drain_pending(
     consumer: str,
     claim_idle_ms: int,
     repo: SubtitleRepository,
-    publisher: SubtitleStatusPublisher,
 ) -> None:
     """Reclaim messages left pending by crashed or stopped consumers."""
     start_id = "0-0"
@@ -178,15 +162,7 @@ def _drain_pending(
         next_id = result[0]
         messages = result[1]
         for message_id, fields in messages:
-            _handle_message(
-                client,
-                stream_key,
-                group,
-                message_id,
-                fields,
-                repo,
-                publisher,
-            )
+            _handle_message(client, stream_key, group, message_id, fields, repo)
 
         if not messages or next_id == "0-0":
             return
@@ -200,12 +176,11 @@ def _handle_message(
     message_id: str,
     fields: Mapping[str, Any],
     repo: SubtitleRepository,
-    publisher: SubtitleStatusPublisher,
 ) -> None:
     logger.info("Received %s[%s]: %s", stream_key, message_id, fields)
 
     try:
-        _process_job(fields, repo, publisher)
+        _process_job(fields, repo)
     except Exception:
         # Infrastructure failure (DB down, unexpected persistence error):
         # leave the message pending and force a reconnect so the next attempt
@@ -237,20 +212,11 @@ def _validated_uuid(raw: Any) -> Optional[str]:
         return None
 
 
-def _mark_failed(
-    repo: SubtitleRepository,
-    publisher: SubtitleStatusPublisher,
-    subtitle_id: str,
-) -> None:
+def _mark_failed(repo: SubtitleRepository, subtitle_id: str) -> None:
     repo.mark_failed(subtitle_id)
-    publisher.publish(subtitle_id, "failed")
 
 
-def _process_job(
-    fields: Mapping[str, Any],
-    repo: SubtitleRepository,
-    publisher: SubtitleStatusPublisher,
-) -> None:
+def _process_job(fields: Mapping[str, Any], repo: SubtitleRepository) -> None:
     """Process one message; job-level failures are recorded and acknowledged."""
     subtitle_id = _validated_uuid(fields.get("id"))
     provider_name = fields.get("provider")
@@ -295,7 +261,7 @@ def _process_job(
             provider_name,
             subtitle_id,
         )
-        _mark_failed(repo, publisher, subtitle_id)
+        _mark_failed(repo, subtitle_id)
         return
 
     service_info = provider_info.get_service(service_key)
@@ -306,21 +272,20 @@ def _process_job(
             service_key,
             subtitle_id,
         )
-        _mark_failed(repo, publisher, subtitle_id)
+        _mark_failed(repo, subtitle_id)
         return
 
     repo.set_status(subtitle_id, "processing")
-    publisher.publish(subtitle_id, "processing")
 
     try:
         artifact = service_info.func(provider_info.cls(), video_url)
     except NoSubtitlesAvailable as exc:
         logger.warning("Job %s: %s", subtitle_id, exc)
-        _mark_failed(repo, publisher, subtitle_id)
+        _mark_failed(repo, subtitle_id)
         return
     except Exception:
         logger.exception("Job %s: provider failed", subtitle_id)
-        _mark_failed(repo, publisher, subtitle_id)
+        _mark_failed(repo, subtitle_id)
         return
 
     try:
@@ -330,7 +295,7 @@ def _process_job(
         )
     except Exception:
         logger.exception("Job %s: processing failed", subtitle_id)
-        _mark_failed(repo, publisher, subtitle_id)
+        _mark_failed(repo, subtitle_id)
         return
 
     if not segments:
@@ -338,11 +303,10 @@ def _process_job(
             "Job %s: subtitle track produced no segments — marking failed",
             subtitle_id,
         )
-        _mark_failed(repo, publisher, subtitle_id)
+        _mark_failed(repo, subtitle_id)
         return
 
     repo.save_result(subtitle_id, segments)
-    publisher.publish(subtitle_id, "completed")
     logger.info(
         "Job %s completed with %d segment(s)",
         subtitle_id,

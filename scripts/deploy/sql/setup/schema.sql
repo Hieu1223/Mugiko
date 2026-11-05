@@ -290,13 +290,24 @@ CREATE INDEX IF NOT EXISTS idx_conversations_updated_at
     ON conversations(updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS messages (
-    id              UUID PRIMARY KEY,
-    conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    role            TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
-    content         TEXT NOT NULL,
-    metadata        JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id                 UUID PRIMARY KEY,
+    conversation_id    UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    role               TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+    content            TEXT NOT NULL,
+    status             TEXT NOT NULL DEFAULT 'completed',
+    error              TEXT,
+    assistant_message_id UUID REFERENCES messages(id) ON DELETE SET NULL,
+    metadata           JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Backfill chat-progress columns on existing databases (idempotent).
+ALTER TABLE "public"."messages"
+    ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'completed',
+    ADD COLUMN IF NOT EXISTS error TEXT,
+    ADD COLUMN IF NOT EXISTS assistant_message_id UUID REFERENCES messages(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_id
     ON messages(conversation_id);
@@ -304,6 +315,10 @@ CREATE INDEX IF NOT EXISTS idx_messages_created_at
     ON messages(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_created
     ON messages(conversation_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_status
+    ON messages(status);
+CREATE INDEX IF NOT EXISTS idx_messages_assistant_message_id
+    ON messages(assistant_message_id);
 
 -- Now create llm_jobs after conversations exists
 -- Matches MugikoGO schema exactly (internal/modules/core/ai/persistent/repository.go)

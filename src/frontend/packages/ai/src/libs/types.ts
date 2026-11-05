@@ -30,10 +30,14 @@ export interface Message {
   conversation_id: string
   role: 'user' | 'assistant' | 'system'
   content: string
+  status: 'queued' | 'processing' | 'completed' | 'failed'
+  error?: string | null
+  assistant_message_id?: string | null
   metadata: Record<string, unknown>
   tokens?: number | null
   model?: string | null
   created_at: string
+  updated_at: string
 }
 
 export interface Conversation {

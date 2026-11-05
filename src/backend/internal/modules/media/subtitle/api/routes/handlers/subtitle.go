@@ -1,13 +1,9 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -174,8 +170,10 @@ func (h *SubtitleHandler) GetSubtitle(w http.ResponseWriter, r *http.Request) {
 }
 
 // StreamSubtitleStatus sends subtitle status changes as Server-Sent Events.
-// It emits the current status immediately, then forwards updates from the
-// subtitle_status Redis stream until the subtitle reaches a terminal status.
+// It subscribes to the Pub/Sub channel for the progress key first, reads the
+// current status from the DB as a snapshot, then forwards live updates. The DB
+// is used as the authoritative fallback on stream close/failure.
+// Payload preserved: {subtitle_id, status}.
 func (h *SubtitleHandler) StreamSubtitleStatus(w http.ResponseWriter, r *http.Request) {
 	subtitleIDStr := r.PathValue("subtitle_id")
 	subtitleID, err := uuid.Parse(subtitleIDStr)
@@ -190,11 +188,14 @@ func (h *SubtitleHandler) StreamSubtitleStatus(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	events := make(chan persistent.StreamMessage, 16)
-	listenErr := make(chan error, 1)
-	go func() {
-		listenErr <- persistent.ListenRedisStream(r.Context(), subtitleStatusStreamKey, events)
-	}()
+	client, err := persistent.GetRedisClient()
+	if err != nil {
+		api.WriteError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	channel := "subtitle:progress:" + subtitleID.String()
+	pubsub := client.Subscribe(r.Context(), channel)
+	defer pubsub.Close()
 
 	subtitle, err := h.svc.GetSubtitle(subtitleID, nil)
 	if err != nil {
@@ -230,33 +231,40 @@ func (h *SubtitleHandler) StreamSubtitleStatus(w http.ResponseWriter, r *http.Re
 		return status == subtitlepersistent.SubtitleStatusCompleted || status == subtitlepersistent.SubtitleStatusFailed
 	}
 
+	// Snapshot from DB first (authoritative), then live updates via Pub/Sub.
 	if sendStatus(subtitle.Status) {
 		return
 	}
 
+	ch := pubsub.Channel()
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
+	reconcile := time.NewTicker(5 * time.Second)
+	defer reconcile.Stop()
 
 	for {
 		select {
 		case <-r.Context().Done():
 			return
-		case err := <-listenErr:
-			if err != nil && !errors.Is(err, context.Canceled) {
-				log.Printf("Subtitle status stream failed: %v", err)
-			}
-			return
-		case message := <-events:
-			id := streamValue(message.Values["id"])
-			if !strings.EqualFold(id, subtitleID.String()) {
-				continue
-			}
-			if sendStatus(streamValue(message.Values["status"])) {
-				return
+		case msg := <-ch:
+			var raw map[string]any
+			if json.Unmarshal([]byte(msg.Payload), &raw) == nil {
+				if st, _ := raw["status"].(string); st != "" {
+					if sendStatus(st) {
+						return
+					}
+				}
 			}
 		case <-heartbeat.C:
 			fmt.Fprint(w, ": ping\n\n")
 			flusher.Flush()
+		case <-reconcile.C:
+			// DB heartbeat reconciliation: reread authoritative status.
+			if cur, err := h.svc.GetSubtitle(subtitleID, nil); err == nil {
+				if sendStatus(cur.Status) {
+					return
+				}
+			}
 		}
 	}
 }
