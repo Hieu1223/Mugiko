@@ -213,13 +213,13 @@ func (r *SubtitleRepository) UpsertServices(providerID uuid.UUID, services []map
 }
 
 // Subtitle methods
-func (r *SubtitleRepository) CreateSubtitle(videoID, videoURL string, providerID, serviceID, createdBy uuid.UUID) (*Subtitle, error) {
+func (r *SubtitleRepository) CreateSubtitle(videoID, videoURL string, providerID, serviceID, createdBy uuid.UUID, language string) (*Subtitle, error) {
 	id := uuid.New()
 	now := time.Now()
 
 	_, err := r.db.Exec(
-		`INSERT INTO subtitles (id, video_id, video_url, provider_id, service_id, created_by, status, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		id.String(), videoID, videoURL, providerID.String(), serviceID.String(), createdBy.String(), "queued", now, now,
+		`INSERT INTO subtitles (id, video_id, video_url, provider_id, service_id, created_by, status, language, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		id.String(), videoID, videoURL, providerID.String(), serviceID.String(), createdBy.String(), "queued", language, now, now,
 	)
 	if err != nil {
 		return nil, err
@@ -233,6 +233,7 @@ func (r *SubtitleRepository) CreateSubtitle(videoID, videoURL string, providerID
 		ServiceID:  serviceID,
 		CreatedBy:  createdBy,
 		Status:     "queued",
+		Language:   language,
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}, nil
@@ -240,12 +241,12 @@ func (r *SubtitleRepository) CreateSubtitle(videoID, videoURL string, providerID
 
 func (r *SubtitleRepository) GetSubtitle(subtitleID uuid.UUID) (*Subtitle, error) {
 	row := r.db.QueryRow(
-		`SELECT id, video_id, video_url, provider_id, service_id, created_by, status, created_at, updated_at FROM subtitles WHERE id = $1`,
+		`SELECT id, video_id, video_url, provider_id, service_id, created_by, status, language, created_at, updated_at FROM subtitles WHERE id = $1`,
 		subtitleID.String(),
 	)
 
 	var s Subtitle
-	err := row.Scan(&s.ID, &s.VideoID, &s.VideoURL, &s.ProviderID, &s.ServiceID, &s.CreatedBy, &s.Status, &s.CreatedAt, &s.UpdatedAt)
+	err := row.Scan(&s.ID, &s.VideoID, &s.VideoURL, &s.ProviderID, &s.ServiceID, &s.CreatedBy, &s.Status, &s.Language, &s.CreatedAt, &s.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, ErrSubtitleNotFound
 	}
@@ -258,7 +259,7 @@ func (r *SubtitleRepository) GetSubtitle(subtitleID uuid.UUID) (*Subtitle, error
 
 func (r *SubtitleRepository) GetSubtitlesByVideoID(videoID string, limit, offset int) ([]*Subtitle, error) {
 	rows, err := r.db.Query(
-		`SELECT id, video_id, video_url, provider_id, service_id, created_by, status, created_at, updated_at FROM subtitles WHERE video_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+		`SELECT id, video_id, video_url, provider_id, service_id, created_by, status, language, created_at, updated_at FROM subtitles WHERE video_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
 		videoID, limit, offset,
 	)
 	if err != nil {
@@ -269,7 +270,7 @@ func (r *SubtitleRepository) GetSubtitlesByVideoID(videoID string, limit, offset
 	var subtitles []*Subtitle
 	for rows.Next() {
 		var s Subtitle
-		err := rows.Scan(&s.ID, &s.VideoID, &s.VideoURL, &s.ProviderID, &s.ServiceID, &s.CreatedBy, &s.Status, &s.CreatedAt, &s.UpdatedAt)
+		err := rows.Scan(&s.ID, &s.VideoID, &s.VideoURL, &s.ProviderID, &s.ServiceID, &s.CreatedBy, &s.Status, &s.Language, &s.CreatedAt, &s.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -373,7 +374,7 @@ func (r *SubtitleRepository) GetUserHistory(userID uuid.UUID, limit, offset int)
 
 	// Get paginated history with subtitle details
 	rows, err := r.db.Query(
-		`SELECT sa.subtitle_id, s.video_id, s.video_url, sa.last_accessed_at,
+		`SELECT sa.subtitle_id, s.video_id, s.video_url, s.language, sa.last_accessed_at,
 		        (SELECT COUNT(*) FROM subtitle_segments WHERE subtitle_id = sa.subtitle_id) as segment_count
 		 FROM subtitle_access sa
 		 JOIN subtitles s ON sa.subtitle_id = s.id
@@ -390,7 +391,7 @@ func (r *SubtitleRepository) GetUserHistory(userID uuid.UUID, limit, offset int)
 	var history []*SubtitleHistoryItem
 	for rows.Next() {
 		var item SubtitleHistoryItem
-		err := rows.Scan(&item.SubtitleID, &item.VideoID, &item.VideoURL, &item.LastAccessedAt, &item.SegmentCount)
+		err := rows.Scan(&item.SubtitleID, &item.VideoID, &item.VideoURL, &item.Language, &item.LastAccessedAt, &item.SegmentCount)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -404,6 +405,7 @@ type SubtitleHistoryItem struct {
 	SubtitleID     uuid.UUID
 	VideoID        string
 	VideoURL       string
+	Language       string
 	LastAccessedAt time.Time
 	SegmentCount   int
 }

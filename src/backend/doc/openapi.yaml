@@ -809,6 +809,9 @@ components:
           format: uuid
         status:
           type: string
+        language:
+          type: string
+          description: Subtitle track language code (e.g. `ja`, `vi`).
         created_at:
           type: string
           format: date-time
@@ -907,6 +910,11 @@ components:
         created_by:
           type: string
           format: uuid
+        status:
+          type: string
+        language:
+          type: string
+          description: Subtitle track language code (e.g. `ja`, `vi`).
         created_at:
           type: string
           format: date-time
@@ -972,6 +980,9 @@ components:
           type: string
         video_url:
           type: string
+        language:
+          type: string
+          description: Subtitle track language code (e.g. `ja`, `vi`).
         last_accessed_at:
           type: string
           format: date-time

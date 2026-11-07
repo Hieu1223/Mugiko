@@ -25,12 +25,13 @@ DB status write is captured by Sequin CDC, routed to `subtitle_progress`, and
 consumed by the Go cache updater which writes `subtitle:progress:<id>` with a
 24h TTL and publishes via Pub/Sub.
 
-Currently one service exists: **YouTube → Japanese subtitles** (`youtube_ja`)
-via yt-dlp in YouTube's native **json3** format — JSON in, JSON out. The
-processor **tokenizes** each cue (Janome morphological analysis) and stores
-each word as `{surface, hiragana}` — exactly two fields. Crawled subtitles
-are **cached in Redis** (see provider, below), so repeated jobs for the same
-video skip yt-dlp entirely.
+Two services exist: **YouTube → Japanese** (`youtube_ja`) and
+**YouTube → Vietnamese** (`youtube_vi`), both via yt-dlp in YouTube's native
+**json3** format — JSON in, JSON out. The processor tokenizes Japanese cues
+with Janome and splits Vietnamese cues into whitespace-delimited words, then
+stores each token as `{surface, hiragana}` — exactly two fields. Crawled
+subtitles are **cached in Redis** (see provider, below), so repeated jobs for
+the same video skip yt-dlp entirely.
 
 ## Layout
 
@@ -101,6 +102,9 @@ Then publish the job (paste the returned id):
 ```
 redis-cli> XADD subtitle_queue * id <returned-uuid> service youtube_ja video_url "https://www.youtube.com/watch?v=dQw4w9WgXcQ" provider YouTube
 ```
+
+For Vietnamese, use `service_key = 'youtube_vi'` in the INSERT and
+`service youtube_vi` in the XADD.
 
 Verify:
 

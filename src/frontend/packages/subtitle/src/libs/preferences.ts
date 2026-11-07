@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 
 export type SubtitleDisplayMode = 'normal' | 'hiragana' | 'both' | 'reverse'
 export type SubtitleLayout = 'side-left' | 'side-right' | 'stack-top' | 'stack-bottom'
+/** Which track appears first when two subtitle languages are shown together. */
+export type DualSubtitleOrder = 'primary-first' | 'secondary-first'
 
 export interface SubtitlePreferences {
   fontScale: number
@@ -10,6 +12,10 @@ export interface SubtitlePreferences {
   lookupOnClick: boolean
   displayMode: SubtitleDisplayMode
   layout: SubtitleLayout
+  /** Order of the two languages in dual-subtitle view. */
+  dualOrder: DualSubtitleOrder
+  /** Show the active subtitle as an overlay on the video player. */
+  captionOnVideo: boolean
   /** Player width in pixels for side-by-side layouts. */
   playerWidth: number
   /** Player height in pixels for stacked layouts. */
@@ -31,6 +37,8 @@ const DEFAULTS: SubtitlePreferences = {
   lookupOnClick: true,
   displayMode: 'both',
   layout: 'side-left',
+  dualOrder: 'primary-first',
+  captionOnVideo: false,
   playerWidth: DEFAULT_PLAYER_WIDTH,
   playerHeight: DEFAULT_PLAYER_HEIGHT,
 }
@@ -49,6 +57,8 @@ export function readSubtitlePreferences(): SubtitlePreferences {
     return {
       ...DEFAULTS,
       ...parsed,
+      dualOrder: parsed.dualOrder === 'secondary-first' ? 'secondary-first' : DEFAULTS.dualOrder,
+      captionOnVideo: typeof parsed.captionOnVideo === 'boolean' ? parsed.captionOnVideo : DEFAULTS.captionOnVideo,
       playerWidth: clampPlayerSize(parsed.playerWidth, DEFAULTS.playerWidth),
       playerHeight: clampPlayerSize(parsed.playerHeight, DEFAULTS.playerHeight),
     }

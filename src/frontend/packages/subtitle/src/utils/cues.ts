@@ -10,10 +10,21 @@ export interface CueSegment {
   text: string
 }
 
+/** Languages whose words are separated by spaces in normal writing. */
+const WORD_SPACED_LANGUAGES = new Set(['vi'])
+
+export function usesWordSpacing(language?: string): boolean {
+  if (!language) return false
+  return WORD_SPACED_LANGUAGES.has(language.toLowerCase().split('-')[0])
+}
+
 /** Normalize the untyped segment payload into usable cues. */
 export function toCues(
   items: Array<{ id: string; idx: number; start_ms: number; end_ms: number; words: unknown }>,
+  language?: string,
 ): CueSegment[] {
+  const separator = usesWordSpacing(language) ? ' ' : ''
+
   return items
     .map((item) => {
       const tokens = normalizeTokens(item.words)
@@ -21,7 +32,7 @@ export function toCues(
         typeof item.words === 'string'
           ? item.words
           : tokens.length > 0
-            ? tokens.map((token) => token.text).join('')
+            ? tokens.map((token) => token.text).join(separator)
             : ''
       return {
         id: item.id,
@@ -36,30 +47,91 @@ export function toCues(
     .sort((a, b) => a.startMs - b.startMs)
 }
 
-export function activeCueIndex(cues: CueSegment[], timeMs: number): number {
-  if (cues.length === 0) return -1
-  let low = 0
-  let high = cues.length - 1
-  let result = -1
-  while (low <= high) {
-    const mid = (low + high) >> 1
-    const cue = cues[mid]
-    if (timeMs < cue.startMs) {
-      high = mid - 1
-    } else if (timeMs > cue.endMs) {
-      low = mid + 1
-    } else {
-      result = mid
-      break
+export function activeCueIndex(
+  items: ReadonlyArray<{ startMs: number; endMs: number }>,
+  timeMs: number,
+): number {
+  let lastStarted = -1
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]
+    if (item.startMs > timeMs) break
+    lastStarted = index
+    if (timeMs <= item.endMs) return index
+  }
+  // Keep the most recent line visible in the gap between lines.
+  return lastStarted
+}
+
+/** One transcript row, potentially pairing the same moment in two languages. */
+export interface SubtitleLine {
+  id: string
+  startMs: number
+  endMs: number
+  primary?: CueSegment
+  secondary?: CueSegment
+}
+
+/**
+ * Combine two cue tracks into a single list. Cues that overlap in time are
+ * paired into one row so both languages render in the same list item.
+ */
+export function mergeCueTracks(
+  primary: CueSegment[],
+  secondary: CueSegment[] = [],
+): SubtitleLine[] {
+  const lines: SubtitleLine[] = []
+  let primaryIndex = 0
+  let secondaryIndex = 0
+
+  while (primaryIndex < primary.length || secondaryIndex < secondary.length) {
+    const primaryCue = primary[primaryIndex]
+    const secondaryCue = secondary[secondaryIndex]
+
+    if (primaryCue && secondaryCue) {
+      const overlaps =
+        Math.min(primaryCue.endMs, secondaryCue.endMs) >=
+        Math.max(primaryCue.startMs, secondaryCue.startMs)
+      if (overlaps) {
+        lines.push({
+          id: `${primaryCue.id}:${secondaryCue.id}`,
+          startMs: Math.min(primaryCue.startMs, secondaryCue.startMs),
+          endMs: Math.max(primaryCue.endMs, secondaryCue.endMs),
+          primary: primaryCue,
+          secondary: secondaryCue,
+        })
+        primaryIndex += 1
+        secondaryIndex += 1
+        continue
+      }
+      if (primaryCue.startMs <= secondaryCue.startMs) {
+        lines.push(cueLine(primaryCue))
+        primaryIndex += 1
+      } else {
+        lines.push(cueLine(secondaryCue))
+        secondaryIndex += 1
+      }
+      continue
+    }
+
+    if (primaryCue) {
+      lines.push(cueLine(primaryCue))
+      primaryIndex += 1
+    } else if (secondaryCue) {
+      lines.push(cueLine(secondaryCue))
+      secondaryIndex += 1
     }
   }
-  if (result === -1) {
-    // Keep the most recent cue visible in the gap between lines.
-    for (let index = cues.length - 1; index >= 0; index -= 1) {
-      if (cues[index].startMs <= timeMs) return index
-    }
+
+  return lines
+}
+
+function cueLine(cue: CueSegment): SubtitleLine {
+  return {
+    id: cue.id,
+    startMs: cue.startMs,
+    endMs: cue.endMs,
+    primary: cue,
   }
-  return result
 }
 
 export function formatClock(ms: number): string {

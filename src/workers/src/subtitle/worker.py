@@ -306,7 +306,7 @@ def _process_job(fields: Mapping[str, Any], repo: SubtitleRepository) -> None:
         _mark_failed(repo, subtitle_id)
         return
 
-    repo.save_result(subtitle_id, segments)
+    repo.save_result(subtitle_id, segments, artifact.get("language"))
     logger.info(
         "Job %s completed with %d segment(s)",
         subtitle_id,

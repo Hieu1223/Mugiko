@@ -190,9 +190,13 @@ CREATE TABLE IF NOT EXISTS subtitles (
     service_id  UUID NOT NULL REFERENCES subtitle_provider_services(id) ON DELETE CASCADE,
     created_by  TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     status      TEXT NOT NULL DEFAULT 'queued',
+    language    TEXT NOT NULL DEFAULT 'ja',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Existing databases created before the language column was added.
+ALTER TABLE subtitles ADD COLUMN IF NOT EXISTS language TEXT NOT NULL DEFAULT 'ja';
 
 CREATE INDEX IF NOT EXISTS idx_subtitles_provider_id
     ON subtitles(provider_id);

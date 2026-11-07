@@ -48,6 +48,7 @@ class SubtitleRepository:
         self,
         subtitle_id: str,
         segments: List[Dict[str, Any]],
+        language: Optional[str] = None,
     ) -> None:
         """Replace all segments for a job and mark it completed."""
         values = [
@@ -77,9 +78,11 @@ class SubtitleRepository:
                 )
             cursor.execute(
                 "UPDATE subtitles "
-                "SET status = 'completed', updated_at = NOW() "
+                "SET status = 'completed', "
+                "    language = COALESCE(%s, language), "
+                "    updated_at = NOW() "
                 "WHERE id = %s",
-                (subtitle_id,),
+                (language, subtitle_id),
             )
 
         logger.info(

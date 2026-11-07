@@ -49,6 +49,12 @@ export function SubtitleSettingsPage() {
         data.layout === 'stack-bottom'
           ? data.layout
           : current.layout,
+      dualOrder:
+        data.dual_order === 'primary-first' || data.dual_order === 'secondary-first'
+          ? data.dual_order
+          : current.dualOrder,
+      captionOnVideo:
+        typeof data.caption_on_video === 'boolean' ? data.caption_on_video : current.captionOnVideo,
     }))
     setRemoteLoaded(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -65,6 +71,8 @@ export function SubtitleSettingsPage() {
         lookup_on_click: prefs.lookupOnClick,
         display_mode: prefs.displayMode,
         layout: prefs.layout,
+        dual_order: prefs.dualOrder,
+        caption_on_video: prefs.captionOnVideo,
       })
       toast('Settings saved.', 'success')
     } catch (err) {
@@ -127,6 +135,33 @@ export function SubtitleSettingsPage() {
             <option value="stack-top">Video top</option>
             <option value="stack-bottom">Video bottom</option>
           </select>
+        </label>
+
+        <label>
+          Dual subtitle order{' '}
+          <select
+            value={prefs.dualOrder}
+            onChange={(event) =>
+              setPrefs((current) => ({
+                ...current,
+                dualOrder: event.target.value as typeof current.dualOrder,
+              }))
+            }
+          >
+            <option value="primary-first">Original first</option>
+            <option value="secondary-first">Second first</option>
+          </select>
+        </label>
+
+        <label>
+          <input
+            type="checkbox"
+            checked={prefs.captionOnVideo}
+            onChange={(event) =>
+              setPrefs((current) => ({ ...current, captionOnVideo: event.target.checked }))
+            }
+          />{' '}
+          Captions on video
         </label>
 
         <label>

@@ -12,7 +12,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts/deploy/sql/setup:/docker-entrypoint-initdb.d:ro
+      - ./sql/setup:/docker-entrypoint-initdb.d:ro
     command:
       - postgres
       - -c
@@ -61,13 +61,13 @@ services:
       PG_USERNAME: postgres
       PG_PASSWORD: postgres
       PG_POOL_SIZE: "20"
-      SECRET_KEY_BASE: ${SEQUIN_SECRET_KEY_BASE}
-      VAULT_KEY: ${SEQUIN_VAULT_KEY}
+      SECRET_KEY_BASE: ${SEQUIN_SECRET_KEY_BASE:?set SEQUIN_SECRET_KEY_BASE in scripts/deploy/.env}
+      VAULT_KEY: ${SEQUIN_VAULT_KEY:?set SEQUIN_VAULT_KEY in scripts/deploy/.env}
       REDIS_URL: redis://sequin_redis:6379
       CONFIG_FILE_PATH: /config/playground.yml
     volumes:
-      - ./scripts/deploy/playground.yml:/config/playground.yml:ro
-      - ./scripts/deploy/sql/sequin:/config/sql:ro
+      - ./playground.yml:/config/playground.yml:ro
+      - ./sql/sequin:/config/sql:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -135,8 +135,10 @@ services:
       READ_BLOCK_MS: "2000"
       CLAIM_IDLE_MS: "300000"
       SUBTITLE_CACHE_TTL_SECONDS: "604800"
+      YTDLP_DENO_PATH: /root/.deno/bin/deno
     volumes:
       - ../../src/workers/nim.txt:/app/nim.txt:ro
+      - ./cookies.txt:/app/cookies.txt
     depends_on:
       postgres:
         condition: service_healthy

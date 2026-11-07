@@ -2,7 +2,8 @@
 
 Pure transform: no I/O and no imports from the stream/persistence layers.
 Japanese cues are tokenized with Janome and stored as ``{surface, hiragana}``;
-other languages keep the full cue as one token so no text is lost.
+space-delimited languages (e.g. Vietnamese) are split into word tokens; other
+languages keep the full cue as one token so no text is lost.
 """
 
 import logging
@@ -59,11 +60,29 @@ def _tokenize_japanese(text: str) -> List[CueWord]:
     return words
 
 
+def _tokenize_words(text: str) -> List[CueWord]:
+    """Space-delimited languages (e.g. Vietnamese): one token per word."""
+    return [
+        CueWord(surface=word, hiragana="")
+        for word in text.split()
+        if word
+    ]
+
+
 def _plain_words(text: str) -> List[CueWord]:
-    """Non-Japanese fallback: keep the whole cue as one display token."""
+    """Other-language fallback: keep the whole cue as one display token."""
     if not text:
         return []
     return [CueWord(surface=text, hiragana="")]
+
+
+def _cue_words(text: str, language: str) -> List[CueWord]:
+    base_language = language.split("-")[0].lower()
+    if base_language == "ja":
+        return _tokenize_japanese(text)
+    if base_language == "vi":
+        return _tokenize_words(text)
+    return _plain_words(text)
 
 
 def _cue_text(event: Dict[str, Any]) -> str:
@@ -78,7 +97,6 @@ def json3_to_segments(
     language: str = "ja",
 ) -> List[SubtitleSegment]:
     """Convert a parsed json3 document into ordered, tokenized segment rows."""
-    use_janome = language.split("-")[0].lower() == "ja"
     segments: List[SubtitleSegment] = []
     idx = 0
 
@@ -90,7 +108,7 @@ def json3_to_segments(
         if not text:
             continue
 
-        words = _tokenize_japanese(text) if use_janome else _plain_words(text)
+        words = _cue_words(text, language)
         if not words:
             continue
 

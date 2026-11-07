@@ -12,7 +12,7 @@ import (
 type ProviderKind string
 
 const (
-	ProviderKindRemote ProviderKind = "remote"
+	ProviderKindRemote  ProviderKind = "remote"
 	ProviderKindYouTube ProviderKind = "youtube"
 )
 
@@ -24,25 +24,25 @@ const (
 )
 
 type SubtitleProvider struct {
-	ID           uuid.UUID  `json:"id"`
-	Name         string     `json:"name"`
+	ID           uuid.UUID    `json:"id"`
+	Name         string       `json:"name"`
 	Kind         ProviderKind `json:"kind"`
-	BaseURL      *string    `json:"base_url,omitempty"`
-	IsActive     bool       `json:"is_active"`
-	LastSyncedAt *time.Time `json:"last_synced_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	BaseURL      *string      `json:"base_url,omitempty"`
+	IsActive     bool         `json:"is_active"`
+	LastSyncedAt *time.Time   `json:"last_synced_at,omitempty"`
+	CreatedAt    time.Time    `json:"created_at"`
+	UpdatedAt    time.Time    `json:"updated_at"`
 }
 
 type SubtitleProviderService struct {
-	ID        uuid.UUID `json:"id"`
+	ID         uuid.UUID `json:"id"`
 	ProviderID uuid.UUID `json:"provider_id"`
 	ServiceKey string    `json:"service_key"`
-	Name      string    `json:"name"`
-	Options   *string   `json:"options,omitempty"`
-	IsActive  bool      `json:"is_active"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Name       string    `json:"name"`
+	Options    *string   `json:"options,omitempty"`
+	IsActive   bool      `json:"is_active"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type Subtitle struct {
@@ -53,17 +53,18 @@ type Subtitle struct {
 	ServiceID  uuid.UUID `json:"service_id"`
 	CreatedBy  uuid.UUID `json:"created_by"`
 	Status     string    `json:"status"`
+	Language   string    `json:"language"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type SubtitleSegment struct {
-	ID        uuid.UUID `json:"id"`
+	ID         uuid.UUID `json:"id"`
 	SubtitleID uuid.UUID `json:"subtitle_id"`
-	Idx       int       `json:"idx"`
-	StartMs   int       `json:"start_ms"`
-	EndMs     int       `json:"end_ms"`
-	Words     *string   `json:"words,omitempty"`
+	Idx        int       `json:"idx"`
+	StartMs    int       `json:"start_ms"`
+	EndMs      int       `json:"end_ms"`
+	Words      *string   `json:"words,omitempty"`
 }
 
 type SubtitleAccess struct {
@@ -73,10 +74,10 @@ type SubtitleAccess struct {
 }
 
 type UserSettings struct {
-	UserID       uuid.UUID `json:"user_id"`
-	SchemaVersion int      `json:"schema_version"`
-	Data         string    `json:"data"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	UserID        uuid.UUID `json:"user_id"`
+	SchemaVersion int       `json:"schema_version"`
+	Data          string    `json:"data"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type SubtitleUserState struct {

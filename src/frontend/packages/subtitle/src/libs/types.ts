@@ -46,6 +46,7 @@ export interface Subtitle {
   service_id?: string
   created_by?: string
   status?: SubtitleStatus
+  language?: string
   created_at?: string
   updated_at?: string
 }
@@ -59,6 +60,7 @@ export interface SubtitleListItem {
   created_by?: string
   created_at?: string
   status?: SubtitleStatus
+  language?: string
   segment_count?: number
 }
 
@@ -83,6 +85,7 @@ export interface SubtitleHistoryItem {
   subtitle_id: string
   video_id?: string
   video_url: string
+  language?: string
   last_accessed_at?: string
   segment_count?: number
 }

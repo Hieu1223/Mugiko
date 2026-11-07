@@ -9,9 +9,11 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import {
+  Button,
   ErrorState,
   Link,
   LoadingState,
+  PageTitle,
   useAsync,
   useDocumentTitle,
   useParams,
@@ -21,12 +23,21 @@ import {
   getAllSubtitleSegments,
   getSubtitle,
   getSubtitleState,
+  searchSubtitles,
   streamSubtitleStatus,
   updateSubtitleState,
 } from '../libs/subtitles'
-import type { SubtitleStatus } from '../libs/types'
-import { activeCueIndex, formatClock, toCues, useAutosave } from '../utils/cues'
+import type { SubtitleListItem, SubtitleStatus } from '../libs/types'
+import {
+  activeCueIndex,
+  formatClock,
+  mergeCueTracks,
+  toCues,
+  useAutosave,
+  usesWordSpacing,
+} from '../utils/cues'
 import { displayVideoName } from '../utils/video'
+import { CreateSubtitleDialog } from '../components/CreateSubtitleDialog'
 import { SegmentList } from '../components/SegmentList'
 import { VideoSurface } from '../components/VideoSurface'
 import {
@@ -49,6 +60,8 @@ export function SubtitleViewerPage() {
   const [liveStatus, setLiveStatus] = useState<SubtitleStatus | null>(null)
   const [streamState, setStreamState] = useState<'idle' | 'live' | 'reconnecting'>('idle')
   const [gotoIndex, setGotoIndex] = useState('')
+  const [secondaryId, setSecondaryId] = useState('')
+  const [createOpen, setCreateOpen] = useState(false)
   const seekRef = useRef<((ms: number) => void) | null>(null)
   const latestTime = useRef(0)
   latestTime.current = timeMs
@@ -105,6 +118,34 @@ export function SubtitleViewerPage() {
     (signal) => getAllSubtitleSegments(subtitleId, signal),
     [subtitleId, revision, status],
     { enabled: Boolean(subtitleId) && Boolean(subtitle.data) && !isWorking && !isFailed },
+  )
+
+  // Other completed tracks for the same video can be shown alongside this one.
+  const candidates = useAsync(
+    () => searchSubtitles({ video_url: subtitle.data?.video_url || '', limit: 50 }),
+    [subtitle.data?.video_url, revision],
+    { enabled: Boolean(subtitle.data?.video_url) },
+  )
+
+  const secondaryOptions = useMemo(
+    () =>
+      (candidates.data || []).filter(
+        (item) => item.id !== subtitleId && (!item.status || item.status === 'completed'),
+      ),
+    [candidates.data, subtitleId],
+  )
+
+  useEffect(() => {
+    if (secondaryId && !secondaryOptions.some((item) => item.id === secondaryId)) {
+      setSecondaryId('')
+    }
+  }, [secondaryId, secondaryOptions])
+
+  const secondaryLanguage = secondaryOptions.find((item) => item.id === secondaryId)?.language
+  const secondarySegments = useAsync(
+    (signal) => getAllSubtitleSegments(secondaryId, signal),
+    [secondaryId, revision],
+    { enabled: Boolean(secondaryId) },
   )
 
   // Follow worker status changes over SSE while the job is queued/processing.
@@ -168,8 +209,21 @@ export function SubtitleViewerPage() {
     return () => window.clearInterval(timer)
   }, [isWorking, subtitle.reload])
 
-  const cues = useMemo(() => toCues(segments.data?.items || []), [segments.data])
-  const activeIndex = useMemo(() => activeCueIndex(cues, timeMs), [cues, timeMs])
+  const cues = useMemo(
+    () => toCues(segments.data?.items || [], subtitle.data?.language),
+    [segments.data, subtitle.data?.language],
+  )
+
+  const secondaryCues = useMemo(
+    () => toCues(secondarySegments.data?.items || [], secondaryLanguage),
+    [secondarySegments.data, secondaryLanguage],
+  )
+
+  const lines = useMemo(
+    () => mergeCueTracks(cues, secondaryId ? secondaryCues : []),
+    [cues, secondaryCues, secondaryId],
+  )
+  const activeIndex = useMemo(() => activeCueIndex(lines, timeMs), [lines, timeMs])
 
   useEffect(() => {
     if (!subtitleId || resumeLoaded) return
@@ -211,21 +265,21 @@ export function SubtitleViewerPage() {
 
   const jumpToCue = useCallback(
     (direction: 1 | -1) => {
-      if (cues.length === 0) return
+      if (lines.length === 0) return
       const base = activeIndex >= 0 ? activeIndex : 0
-      const next = Math.min(Math.max(base + direction, 0), cues.length - 1)
-      seek(cues[next].startMs)
+      const next = Math.min(Math.max(base + direction, 0), lines.length - 1)
+      seek(lines[next].startMs)
     },
-    [cues, activeIndex, seek],
+    [lines, activeIndex, seek],
   )
 
   const goToIndex = useCallback(() => {
     const index = Number(gotoIndex) - 1
-    if (!Number.isFinite(index) || cues.length === 0) return
-    const clamped = Math.min(Math.max(Math.floor(index), 0), cues.length - 1)
-    seek(cues[clamped].startMs)
+    if (!Number.isFinite(index) || lines.length === 0) return
+    const clamped = Math.min(Math.max(Math.floor(index), 0), lines.length - 1)
+    seek(lines[clamped].startMs)
     setGotoIndex('')
-  }, [gotoIndex, cues, seek])
+  }, [gotoIndex, lines, seek])
 
   const commitPlayerSize = useCallback(
     (next: number) => {
@@ -362,7 +416,14 @@ export function SubtitleViewerPage() {
 
   return (
     <div className="watch">
-      <h1>{displayVideoName(data.video_url)}</h1>
+      <PageTitle
+        title={displayVideoName(data.video_url)}
+        actions={
+          <Button variant="primary" onClick={() => setCreateOpen(true)}>
+            New subtitle
+          </Button>
+        }
+      />
 
       <details className="watch-controls" open>
         <summary>Controls</summary>
@@ -401,6 +462,39 @@ export function SubtitleViewerPage() {
               <option value="stack-bottom">Video bottom</option>
             </select>
           </label>
+          {secondaryOptions.length > 0 && (
+            <label>
+              Second subtitle:{' '}
+              <select
+                value={secondaryId}
+                onChange={(event) => setSecondaryId(event.target.value)}
+              >
+                <option value="">Off</option>
+                {secondaryOptions.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {secondarySubtitleLabel(item)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {secondaryId && (
+            <label>
+              Language order:{' '}
+              <select
+                value={prefs.dualOrder}
+                onChange={(event) =>
+                  setPrefs((current) => ({
+                    ...current,
+                    dualOrder: event.target.value as typeof current.dualOrder,
+                  }))
+                }
+              >
+                <option value="primary-first">Original first</option>
+                <option value="secondary-first">Second first</option>
+              </select>
+            </label>
+          )}
           <label>
             <input
               type="checkbox"
@@ -432,11 +526,21 @@ export function SubtitleViewerPage() {
             Word lookup
           </label>
           <label>
+            <input
+              type="checkbox"
+              checked={prefs.captionOnVideo}
+              onChange={(event) =>
+                setPrefs((current) => ({ ...current, captionOnVideo: event.target.checked }))
+              }
+            />{' '}
+            Captions on video
+          </label>
+          <label>
             Go to #:{' '}
             <input
               type="number"
               min={1}
-              max={Math.max(cues.length, 1)}
+              max={Math.max(lines.length, 1)}
               value={gotoIndex}
               onChange={(event) => setGotoIndex(event.target.value)}
               onKeyDown={(event) => {
@@ -462,14 +566,39 @@ export function SubtitleViewerPage() {
         style={areaStyle}
       >
         <div className="watch-player">
-          <VideoSurface
-            videoId={data.video_id}
-            videoUrl={data.video_url}
-            startMs={resumeMs}
-            onTime={setTimeMs}
-            onDuration={setDurationMs}
-            seekRef={seekRef}
-          />
+          <div className="watch-player__surface">
+            <VideoSurface
+              videoId={data.video_id}
+              videoUrl={data.video_url}
+              startMs={resumeMs}
+              onTime={setTimeMs}
+              onDuration={setDurationMs}
+              seekRef={seekRef}
+            />
+            {prefs.captionOnVideo && !isWorking && !isFailed && (
+              <div className="video-caption-overlay" aria-live="polite">
+                {(() => {
+                  const primaryCue = lines[activeIndex]?.primary
+                  const secondaryCue = lines[activeIndex]?.secondary
+                  const entries: Array<{ key: string; cue: typeof primaryCue; language?: string }> = []
+                  if (primaryCue) entries.push({ key: 'primary', cue: primaryCue, language: data.language })
+                  if (secondaryCue) entries.push({ key: 'secondary', cue: secondaryCue, language: secondaryLanguage })
+                  if (prefs.dualOrder === 'secondary-first') entries.reverse()
+                  return entries.map((entry) => {
+                    if (!entry.cue) return null
+                    return (
+                      <span key={entry.key} className={`video-caption-overlay__line video-caption-overlay__line--${entry.key}`}>
+                        {secondaryId && entry.language && (
+                          <span className="video-caption-overlay__lang">{entry.language.toUpperCase()}</span>
+                        )}
+                        {entry.cue.text}
+                      </span>
+                    )
+                  })
+                })()}
+              </div>
+            )}
+          </div>
         </div>
 
         <div
@@ -523,21 +652,57 @@ export function SubtitleViewerPage() {
                 />
               )}
               {!segments.loading && !segments.error && segments.data && (
-                <SegmentList
-                  cues={cues}
-                  activeIndex={activeIndex}
-                  autoScroll={prefs.autoScroll}
-                  showTimestamps={prefs.showTimestamps}
-                  displayMode={prefs.displayMode}
-                  fontScale={prefs.fontScale}
-                  lookupEnabled={prefs.lookupOnClick}
-                  onSeek={seek}
-                />
+                <>
+                  <SegmentList
+                    lines={lines}
+                    activeIndex={activeIndex}
+                    autoScroll={prefs.autoScroll}
+                    showTimestamps={prefs.showTimestamps}
+                    displayMode={prefs.displayMode}
+                    fontScale={prefs.fontScale}
+                    lookupEnabled={prefs.lookupOnClick}
+                    order={prefs.dualOrder}
+                    primaryLanguage={data.language}
+                    secondaryLanguage={secondaryId ? secondaryLanguage : undefined}
+                    primaryWordSpacing={usesWordSpacing(data.language)}
+                    secondaryWordSpacing={usesWordSpacing(secondaryLanguage)}
+                    onSeek={seek}
+                  />
+                  {secondaryId && secondarySegments.loading && (
+                    <p className="status">Loading second subtitle…</p>
+                  )}
+                  {secondaryId && secondarySegments.error && (
+                    <ErrorState
+                      message={secondarySegments.error}
+                      forbidden={secondarySegments.forbidden}
+                      onRetry={secondarySegments.reload}
+                    />
+                  )}
+                </>
               )}
             </>
           )}
         </div>
       </div>
+
+      {createOpen && (
+        <CreateSubtitleDialog
+          initialVideoUrl={data.video_url}
+          onClose={() => setCreateOpen(false)}
+        />
+      )}
     </div>
   )
+}
+
+function displayLanguage(language?: string): string {
+  return language ? language.toUpperCase() : 'Unknown'
+}
+
+function secondarySubtitleLabel(item: SubtitleListItem): string {
+  const language = displayLanguage(item.language)
+  if (!item.created_at) return language
+  const created = new Date(item.created_at)
+  if (Number.isNaN(created.getTime())) return language
+  return `${language} · ${created.toLocaleDateString()}`
 }

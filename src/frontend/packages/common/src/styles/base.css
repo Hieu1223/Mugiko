@@ -397,6 +397,38 @@ body.watch-page .site-main {
 .watch-area.stack-bottom { flex-direction: column-reverse; }
 .watch-player { display: flex; flex: 0 0 var(--watch-player-size, 480px); align-items: flex-start; justify-content: center; min-width: 0; max-width: 80%; }
 .watch-player .video-surface { width: 100%; max-width: 100%; height: auto; max-height: 100%; aspect-ratio: 16 / 9; }
+.watch-player__surface { position: relative; width: 100%; max-width: 100%; }
+.video-caption-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 8%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2em;
+  pointer-events: none;
+  padding: 0 0.75em;
+  text-align: center;
+  z-index: 2;
+}
+.video-caption-overlay__line {
+  display: block;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  padding: 0.15em 0.5em;
+  border-radius: 0.25em;
+  font-size: 1em;
+  line-height: 1.3;
+  max-width: 90%;
+}
+.video-caption-overlay__lang {
+  margin-right: 0.4em;
+  font-size: 0.72em;
+  font-weight: bold;
+  text-transform: uppercase;
+  color: #ffd700;
+}
 .watch-area.stack-top .watch-player, .watch-area.stack-bottom .watch-player { flex: 0 0 var(--watch-player-size, 320px); align-items: stretch; max-width: none; }
 .watch-area.stack-top .watch-player .video-surface, .watch-area.stack-bottom .watch-player .video-surface { height: 100%; aspect-ratio: auto; }
 .watch-subs { display: flex; flex: 1 1 auto; flex-direction: column; gap: .25em; min-width: 0; min-height: 0; overflow: hidden; }
@@ -425,8 +457,9 @@ body.watch-resizing--row, body.watch-resizing--row * { cursor: row-resize !impor
 .segment:last-child { border-bottom: 0; }
 .segment:hover { background: #eef; }
 .segment.is-active { background: #ff0; }
+.segment__row { display: flex; gap: .5em; align-items: baseline; }
 .segment__time {
-  margin-right: .5em;
+  flex: 0 0 auto;
   padding: 0;
   border: 0;
   background: transparent;
@@ -435,6 +468,9 @@ body.watch-resizing--row, body.watch-resizing--row * { cursor: row-resize !impor
   font-size: .85em;
 }
 .segment__time:hover { background: transparent; text-decoration: underline; }
+.segment__lines { display: flex; flex: 1 1 auto; flex-direction: column; gap: .1em; min-width: 0; }
+.segment__line { display: block; min-width: 0; overflow-wrap: anywhere; }
+.segment__lang { margin-right: .4em; color: #888; font-size: .72em; font-weight: bold; letter-spacing: .04em; text-transform: uppercase; }
 .segment__text { display: inline; }
 .history-video { display: flex; gap: .5em; align-items: flex-start; }
 .history-video__info { min-width: 0; overflow-wrap: anywhere; }

@@ -117,8 +117,11 @@ func (s *SubtitleService) CreateSubtitle(userID uuid.UUID, data dto.SubtitleCrea
 		return nil, persistent.ErrServiceNotFound
 	}
 
+	// The service options carry the subtitle language (e.g. {"language":"vi"}).
+	language := serviceLanguage(service.Options)
+
 	// Create subtitle record
-	subtitle, err := s.repo.CreateSubtitle(videoID, data.VideoURL, data.ProviderID, service.ID, userID)
+	subtitle, err := s.repo.CreateSubtitle(videoID, data.VideoURL, data.ProviderID, service.ID, userID, language)
 	if err != nil {
 		return nil, err
 	}
@@ -132,6 +135,7 @@ func (s *SubtitleService) CreateSubtitle(userID uuid.UUID, data dto.SubtitleCrea
 		ServiceID:  subtitle.ServiceID,
 		CreatedBy:  subtitle.CreatedBy,
 		Status:     subtitle.Status,
+		Language:   subtitle.Language,
 		CreatedAt:  subtitle.CreatedAt,
 		UpdatedAt:  subtitle.UpdatedAt,
 	}, nil
@@ -156,6 +160,7 @@ func (s *SubtitleService) GetSubtitle(subtitleID uuid.UUID, userID *uuid.UUID) (
 		ServiceID:  subtitle.ServiceID,
 		CreatedBy:  subtitle.CreatedBy,
 		Status:     subtitle.Status,
+		Language:   subtitle.Language,
 		CreatedAt:  subtitle.CreatedAt,
 		UpdatedAt:  subtitle.UpdatedAt,
 	}, nil
@@ -219,6 +224,8 @@ func (s *SubtitleService) SearchSubtitles(videoURL string, limit, offset int) ([
 			ProviderID:   sub.ProviderID,
 			ServiceID:    sub.ServiceID,
 			CreatedBy:    sub.CreatedBy,
+			Status:       sub.Status,
+			Language:     sub.Language,
 			CreatedAt:    sub.CreatedAt,
 			SegmentCount: len(segs),
 		}
@@ -331,6 +338,7 @@ func (s *SubtitleService) GetUserHistory(userID uuid.UUID, limit, offset int) (*
 			SubtitleID:     item.SubtitleID,
 			VideoID:        item.VideoID,
 			VideoURL:       item.VideoURL,
+			Language:       item.Language,
 			LastAccessedAt: item.LastAccessedAt,
 			SegmentCount:   item.SegmentCount,
 		}
@@ -342,6 +350,23 @@ func (s *SubtitleService) GetUserHistory(userID uuid.UUID, limit, offset int) (*
 		Limit:  limit,
 		Offset: offset,
 	}, nil
+}
+
+// serviceLanguage reads the language declared in a provider service's options.
+// Services created before language options existed default to Japanese.
+func serviceLanguage(options *string) string {
+	const defaultLanguage = "ja"
+	if options == nil {
+		return defaultLanguage
+	}
+
+	var parsed struct {
+		Language string `json:"language"`
+	}
+	if err := json.Unmarshal([]byte(*options), &parsed); err != nil || parsed.Language == "" {
+		return defaultLanguage
+	}
+	return parsed.Language
 }
 
 // Helper function to extract YouTube video ID

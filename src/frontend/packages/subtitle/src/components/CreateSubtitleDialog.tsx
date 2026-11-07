@@ -18,12 +18,18 @@ import { createSubtitle, listSubtitleProviders } from '../libs/subtitles'
 import { parseVideoUrl } from '../utils/video'
 import { VideoPreview } from './VideoPreview'
 
-export function CreateSubtitleDialog({ onClose }: { onClose: () => void }) {
+export function CreateSubtitleDialog({
+  onClose,
+  initialVideoUrl = '',
+}: {
+  onClose: () => void
+  initialVideoUrl?: string
+}) {
   const navigate = useNavigate()
   const { revision } = useSession()
   const { toast } = useToast()
 
-  const [videoUrl, setVideoUrl] = useState('')
+  const [videoUrl, setVideoUrl] = useState(initialVideoUrl)
   const [providerId, setProviderId] = useState('')
   const [serviceKey, setServiceKey] = useState('')
   const [busy, setBusy] = useState(false)
