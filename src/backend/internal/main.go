@@ -1,16 +1,19 @@
 package internal
 
 import (
+	"log"
+
 	"mugiko/internal/common/middleware"
 	"mugiko/internal/common/persistent"
 	airoutes "mugiko/internal/modules/core/ai/api/routes"
 	deckroutes "mugiko/internal/modules/core/deck/api/routes"
-	log "mugiko/internal/modules/core/log"
+	corelog "mugiko/internal/modules/core/log"
 	lookuproutes "mugiko/internal/modules/core/lookup/api/routes"
 	userroutes "mugiko/internal/modules/core/user/api/routes"
 	userhandlers "mugiko/internal/modules/core/user/api/routes/handlers"
 	user "mugiko/internal/modules/core/user/middleware"
 	mangaroutes "mugiko/internal/modules/media/manga/api/routes"
+	mangaservice "mugiko/internal/modules/media/manga/service"
 	ocrroutes "mugiko/internal/modules/media/ocr/api/routes"
 	subtitleroutes "mugiko/internal/modules/media/subtitle/api/routes"
 	webnovelroutes "mugiko/internal/modules/media/webnovel/api/routes"
@@ -22,8 +25,14 @@ import (
 
 func Run() {
 	db := persistent.GetDB()
+
+	// Seed the default built-in manga provider (idempotent; runs on every start).
+	if err := mangaservice.EnsureBuiltinProvider(db); err != nil {
+		log.Fatalf("Failed to seed built-in manga provider: %v", err)
+	}
+
 	stack := middleware.Stack(
-		log.Log,
+		corelog.Log,
 		user.AuthContext,
 	)
 	mux := http.NewServeMux()

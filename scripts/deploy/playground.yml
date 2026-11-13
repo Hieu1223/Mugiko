@@ -76,6 +76,32 @@ functions:
     name: subtitle-progress-transform
     type: transform
     description: ""
+  - code: |
+      def transform(action, record, changes, metadata) do
+        %{
+          id: record["id"],
+          image_url: record["image_url"],
+          status: record["status"],
+          entity_type: "ocr",
+          entity_id: record["id"]
+        }
+      end
+    name: ocr-job-transform
+    type: transform
+    description: ""
+  - code: |
+      def transform(action, record, changes, metadata) do
+        %{
+          id: record["id"],
+          status: record["status"],
+          error: record["error"],
+          entity_type: "ocr",
+          entity_id: record["id"]
+        }
+      end
+    name: ocr-progress-transform
+    type: transform
+    description: ""
 sinks:
   - name: mugiko-subtitle-sink
     status: active
@@ -233,6 +259,62 @@ sinks:
       tls: false
       database: 0
       stream_key: subtitle_progress
+    actions:
+      - update
+    batch_size: 50
+    database: mugiko
+    annotations: {}
+    timestamp_format: iso8601
+    message_grouping: true
+    max_retry_count: null
+    load_shedding_policy: pause_on_full
+    active_backfills: []
+    routing: none
+
+  # OCR job queue: new ocr_results rows feed the OCR worker.
+  - name: mugiko-ocr-jobs-sink
+    status: active
+    filter: none
+    tables: []
+    source:
+      include_tables:
+        - public.ocr_results
+    transform: ocr-job-transform
+    destination:
+      port: 6379
+      type: redis_stream
+      host: sequin_redis
+      tls: false
+      database: 0
+      stream_key: ocr_jobs
+    actions:
+      - insert
+    batch_size: 50
+    database: mugiko
+    annotations: {}
+    timestamp_format: iso8601
+    message_grouping: true
+    max_retry_count: null
+    load_shedding_policy: pause_on_full
+    active_backfills: []
+    routing: none
+
+  # OCR progress stream: status updates on ocr_results feed the cache updater.
+  - name: mugiko-ocr-progress-sink
+    status: active
+    filter: none
+    tables: []
+    source:
+      include_tables:
+        - public.ocr_results
+    transform: ocr-progress-transform
+    destination:
+      port: 6379
+      type: redis_stream
+      host: sequin_redis
+      tls: false
+      database: 0
+      stream_key: ocr_progress
     actions:
       - update
     batch_size: 50

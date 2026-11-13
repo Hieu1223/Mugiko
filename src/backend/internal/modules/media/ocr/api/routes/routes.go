@@ -15,4 +15,6 @@ func RegisterOCRRoutes(mux *http.ServeMux, db *sql.DB) {
 	handler := handlers.NewOCRHandler(svc)
 
 	mux.HandleFunc("POST /api/v1/ocr", handler.CreateOCR)
+	mux.HandleFunc("GET /api/v1/ocr/{ocr_id}", handler.GetOCR)
+	mux.HandleFunc("GET /api/v1/ocr/{ocr_id}/status", handler.StreamOCRStatus)
 }

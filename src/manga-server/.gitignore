@@ -1,0 +1,8 @@
+*.db
+*.db-wal
+*.db-shm
+*.log
+/build
+/dist
+.env
+.env.local

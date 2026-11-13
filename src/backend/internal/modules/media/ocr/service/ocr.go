@@ -38,6 +38,20 @@ func (s *OCRService) CreateOCR(userID uuid.UUID, req dto.OCRCreate) (*dto.OCRRes
 	return toResponse(result)
 }
 
+// GetOCR returns one OCR job with its parsed data and status.
+func (s *OCRService) GetOCR(id uuid.UUID) (*dto.OCRResponse, error) {
+	result, err := s.repo.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+	return toResponse(result)
+}
+
+// GetOCRStatus returns the current status of an OCR job.
+func (s *OCRService) GetOCRStatus(id uuid.UUID) (string, error) {
+	return s.repo.GetStatus(id)
+}
+
 func toResponse(result *persistent.OCRResult) (*dto.OCRResponse, error) {
 	response := &dto.OCRResponse{
 		ID:        result.ID,
@@ -50,11 +64,10 @@ func toResponse(result *persistent.OCRResult) (*dto.OCRResponse, error) {
 	}
 
 	if result.OCRData != nil {
-		var data dto.PaddleOCRData
-		if err := json.Unmarshal([]byte(*result.OCRData), &data); err != nil {
-			return nil, err
+		var data dto.ParseResult
+		if err := json.Unmarshal([]byte(*result.OCRData), &data); err == nil {
+			response.OCRData = &data
 		}
-		response.OCRData = &data
 	}
 
 	return response, nil

@@ -3,7 +3,7 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # yt-dlp requires a JS runtime (Deno) for YouTube's EJS challenge solver.
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip && \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip ffmpeg && \
     curl -fsSL https://deno.land/install.sh | sh && \
     apt-get purge -y curl unzip && \
     apt-get autoremove -y && \

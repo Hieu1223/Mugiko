@@ -33,7 +33,7 @@ func NewFromEnv() (*Updater, error) {
 	}
 	client := redis.NewClient(opts)
 
-	streams := []string{"chat_progress", "llm_progress", "subtitle_progress"}
+	streams := []string{"chat_progress", "llm_progress", "subtitle_progress", "ocr_progress"}
 	if v := os.Getenv("PROGRESS_STREAMS"); v != "" {
 		streams = strings.Split(v, ",")
 	}
@@ -278,6 +278,8 @@ func streamPrefix(stream string) string {
 		return "llm"
 	case "subtitle_progress":
 		return "subtitle"
+	case "ocr_progress":
+		return "ocr"
 	}
 	return strings.TrimSuffix(stream, "_progress")
 }
@@ -290,6 +292,8 @@ func progressPrefix(entityType string) string {
 		return "llm:progress"
 	case "subtitle":
 		return "subtitle:progress"
+	case "ocr", "ocr_job":
+		return "ocr:progress"
 	}
 	if strings.HasSuffix(entityType, ":progress") {
 		return entityType

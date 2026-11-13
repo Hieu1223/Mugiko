@@ -1004,33 +1004,30 @@ components:
           type: integer
     
     # OCR schemas
-    PaddleOCRData:
+    ParseResult:
       type: object
-      description: PaddleOCR output with confidence scores omitted.
-      required: [dt_polys, rec_texts, rec_polys]
+      description: NVIDIA nemotron-3.5-parse output stored as raw JSON.
       properties:
-        dt_polys:
-          type: array
-          items:
-            type: array
-            items:
-              type: array
-              items:
-                type: number
-                format: float
-        rec_texts:
-          type: array
-          items:
-            type: string
-        rec_polys:
-          type: array
-          items:
-            type: array
-            items:
-              type: array
-              items:
-                type: number
-                format: float
+        content:
+          type: string
+          description: Extracted document text with bounding boxes and class tags.
+        finish_reason:
+          type: string
+        usage:
+          type: object
+          properties:
+            output_tokens:
+              type: integer
+    
+    OCRStatusEvent:
+      type: object
+      properties:
+        ocr_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, processing, completed, failed]
     
     OCRCreate:
       type: object
@@ -1056,7 +1053,7 @@ components:
         ocr_data:
           nullable: true
           allOf:
-            - $ref: '#/components/schemas/PaddleOCRData'
+            - $ref: '#/components/schemas/ParseResult'
         error:
           type: string
           nullable: true
@@ -3149,7 +3146,65 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-  
+
+  /api/v1/ocr/{ocr_id}:
+    get:
+      tags: [OCR]
+      summary: Get an OCR job
+      description: |
+        Returns one OCR job including its parsed data (`ocr_data`) and status.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: ocr_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: OCR job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OCRResponse'
+        '404':
+          description: OCR job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/ocr/{ocr_id}/status:
+    get:
+      tags: [OCR]
+      summary: Stream OCR job status via SSE
+      description: |
+        Server-sent events of OCR job status changes. Emits `{ocr_id, status}`
+        on the `status` event until the job reaches `completed` or `failed`.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: ocr_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: SSE event stream
+          content:
+            text/event-stream:
+              schema:
+                type: object
+                properties:
+                  ocr_id:
+                    type: string
+                  status:
+                    type: string
+
   # ==================== WEBNOVEL ROUTES ====================
   /api/v1/webnovel/novels:
     post:

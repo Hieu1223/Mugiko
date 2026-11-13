@@ -20,7 +20,8 @@
       "@mugiko/common": ["packages/common/src/index.ts"],
       "@mugiko/subtitle": ["packages/subtitle/src/index.tsx"],
       "@mugiko/webnovel": ["packages/webnovel/src/index.tsx"],
-      "@mugiko/ai": ["packages/ai/src/index.tsx"]
+      "@mugiko/ai": ["packages/ai/src/index.tsx"],
+      "@mugiko/manga": ["packages/manga/src/index.tsx"]
     }
   },
   "include": ["src", "packages", "vite.config.ts"]

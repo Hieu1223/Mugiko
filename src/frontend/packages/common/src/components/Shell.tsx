@@ -25,6 +25,7 @@ const SITES: Array<{ id: string; label: string; to: string }> = [
   { id: 'decks', label: 'Decks', to: '/decks' },
   { id: 'lookup', label: 'Lookup', to: '/lookup' },
   { id: 'ai', label: 'AI', to: '/ai' },
+  { id: 'manga', label: 'Manga', to: '/manga' },
 ]
 
 function isSiteActive(activePage: string | undefined, siteId: string): boolean {
@@ -35,6 +36,7 @@ function isSiteActive(activePage: string | undefined, siteId: string): boolean {
   if (siteId === 'decks') return activePage.startsWith('deck')
   if (siteId === 'lookup') return activePage === 'lookup'
   if (siteId === 'ai') return activePage === 'ai'
+  if (siteId === 'manga') return activePage.startsWith('manga')
   return false
 }
 

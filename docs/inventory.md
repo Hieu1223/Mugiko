@@ -186,6 +186,9 @@ Subtitle-only worker. The LLM worker has been moved to `src/llm-worker/` (Go). P
 | `CONSUMER_NAME` | `subtitle-worker-1` | No | Consumer name |
 | `READ_BLOCK_MS` | `2000` | No | XREAD block timeout |
 | `CLAIM_IDLE_MS` | `300000` | No | Claim idle timeout |
+| `REDIS_SOCKET_TIMEOUT_SECONDS` | `10` | No | Redis socket timeout; defaults to max(10, READ_BLOCK_MS/1000 + 5) |
+| `RECOVERY_STALE_SECONDS` | `300` | No | Retry queued/processing jobs stuck longer than this (seconds) |
+| `RECOVERY_BATCH_SIZE` | `10` | No | Max stale jobs to recover per batch |
 | `SUBTITLE_CACHE_TTL_SECONDS` | `604800` | No | Cache TTL (7 days) |
 
 ---

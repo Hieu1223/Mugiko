@@ -11,7 +11,7 @@ import uuid
 from typing import Any, Mapping, Optional
 
 import redis
-from redis.exceptions import ResponseError
+from redis.exceptions import ResponseError, TimeoutError
 
 from .config import SubtitleConfig
 from .persistent.db import Database
@@ -65,7 +65,7 @@ def _serve(queue: str, config: SubtitleConfig) -> None:
     client = None
 
     try:
-        client = redis.Redis.from_url(config.redis_url, decode_responses=True)
+        client = _new_redis_client(config)
         repo = SubtitleRepository(db)
 
         sync_registry(db, get_providers())
@@ -78,6 +78,10 @@ def _serve(queue: str, config: SubtitleConfig) -> None:
             config.claim_idle_ms,
             repo,
         )
+        # Recover any jobs stuck in PostgreSQL from a previous crash or from
+        # jobs whose stream message was never published (e.g. lost on a Redis
+        # socket timeout).
+        _recover_stale_jobs(repo, config)
 
         logger.info(
             "Waiting for messages: stream=%r group=%r consumer=%r",
@@ -95,6 +99,31 @@ def _serve(queue: str, config: SubtitleConfig) -> None:
                     count=1,
                     block=config.read_block_ms,
                 )
+            except TimeoutError:
+                logger.warning(
+                    "Redis socket timeout on %r; recovering stale jobs and "
+                    "reconnecting",
+                    queue,
+                )
+                _recover_stale_jobs(repo, config)
+                _rebuild_client(client, config)
+                client = redis.Redis.from_url(
+                    config.redis_url,
+                    decode_responses=True,
+                    socket_timeout=config.socket_timeout_seconds,
+                    socket_connect_timeout=5,
+                    health_check_interval=30,
+                )
+                _ensure_group(client, queue, config.consumer_group)
+                _drain_pending(
+                    client,
+                    queue,
+                    config.consumer_group,
+                    config.consumer_name,
+                    config.claim_idle_ms,
+                    repo,
+                )
+                continue
             except redis.RedisError:
                 logger.exception("Redis read failed; retrying in 1 second")
                 time.sleep(1)
@@ -109,6 +138,10 @@ def _serve(queue: str, config: SubtitleConfig) -> None:
                     config.claim_idle_ms,
                     repo,
                 )
+                # Periodically recover jobs stuck in PostgreSQL whose stream
+                # message was never published (e.g. lost on a timeout) so they
+                # are retried even without a Redis error.
+                _maybe_recover_stale(repo, config)
                 continue
 
             for _stream_name, messages in response:
@@ -119,6 +152,78 @@ def _serve(queue: str, config: SubtitleConfig) -> None:
             client.close()
         db.close()
         logger.info("Subtitle worker connection on stream %r closed", queue)
+
+
+def _new_redis_client(config: SubtitleConfig) -> redis.Redis:
+    """Create a Redis client with a socket timeout above the XREAD block so a
+    blocking read races the socket timeout instead of hitting redis-py's
+    default 5 second timeout."""
+    return redis.Redis.from_url(
+        config.redis_url,
+        decode_responses=True,
+        socket_timeout=config.socket_timeout_seconds,
+        socket_connect_timeout=5,
+        health_check_interval=30,
+    )
+
+
+def _rebuild_client(old: Optional[redis.Redis], config: SubtitleConfig) -> None:
+    """Best-effort close of a stale Redis client before rebuilding it."""
+    if old is None:
+        return
+    try:
+        old.close()
+    except Exception:
+        pass
+
+
+def _recover_stale_jobs(repo: SubtitleRepository, config: SubtitleConfig) -> None:
+    """Scan PostgreSQL for stuck jobs and rerun them through the pipeline.
+
+    Rows stuck in ``queued``/``processing`` past ``recovery_stale_seconds``
+    are claimed atomically (``FOR UPDATE SKIP LOCKED``) so concurrent workers
+    never recover the same row twice. ``failed`` rows are left terminal.
+    """
+    try:
+        rows = repo.claim_stale_jobs(
+            config.recovery_stale_seconds, config.recovery_batch_size,
+        )
+    except Exception:
+        logger.exception("Stale job recovery scan failed")
+        return
+
+    if not rows:
+        return
+
+    logger.info("Recovering %d stale subtitle job(s)", len(rows))
+    for row in rows:
+        fields = {
+            "id": row["subtitle_id"],
+            "provider": row["provider_name"],
+            "service": row["service_key"],
+            "video_url": row["video_url"],
+        }
+        try:
+            _process_job(fields, repo)
+        except Exception:
+            logger.exception(
+                "Recovered job %s failed during processing",
+                row["subtitle_id"],
+            )
+
+
+def _maybe_recover_stale(repo: SubtitleRepository, config: SubtitleConfig) -> None:
+    """Throttled stale-job recovery for the idle loop.
+
+    Runs ``_recover_stale_jobs`` at most once every 30 seconds so idle workers
+    don't hammer PostgreSQL on every empty XREADGROUP.
+    """
+    now = time.monotonic()
+    last = getattr(_maybe_recover_stale, "_last_run", 0.0)
+    if now - last < 30:
+        return
+    _maybe_recover_stale._last_run = now
+    _recover_stale_jobs(repo, config)
 
 
 def _ensure_group(client: redis.Redis, stream_key: str, group: str) -> None:

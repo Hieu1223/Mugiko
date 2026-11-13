@@ -12,6 +12,7 @@ from .registry import (
 
 # Registration side effect. Add one import per provider module.
 from . import youtube  # noqa: E402,F401
+from . import groq  # noqa: E402,F401
 
 __all__ = [
     "ProviderInfo",

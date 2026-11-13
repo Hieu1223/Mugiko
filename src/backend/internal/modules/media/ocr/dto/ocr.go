@@ -11,22 +11,32 @@ type OCRCreate struct {
 	ImageURL string `json:"image_url"`
 }
 
-// PaddleOCRData is the PaddleOCR result shape stored in ocr_results.ocr_data.
-// Scores are intentionally omitted; only the text and polygons are retained.
-type PaddleOCRData struct {
-	DTPolys  [][][]float64 `json:"dt_polys"`
-	RecTexts []string      `json:"rec_texts"`
-	RecPolys [][][]float64 `json:"rec_polys"`
+// ParseResult is the parsed document output returned by NVIDIA nemotron-3.5-parse.
+type ParseResult struct {
+	Content      string     `json:"content"`
+	FinishReason string     `json:"finish_reason,omitempty"`
+	Usage        ParseUsage `json:"usage,omitempty"`
+}
+
+// ParseUsage holds token usage from the NIM response.
+type ParseUsage struct {
+	OutputTokens int `json:"output_tokens,omitempty"`
+}
+
+// OCRStatusEvent is sent over SSE when an OCR job status changes.
+type OCRStatusEvent struct {
+	OCRID  string `json:"ocr_id"`
+	Status string `json:"status"`
 }
 
 // OCRResponse is the API representation of an OCR job.
 type OCRResponse struct {
-	ID        uuid.UUID      `json:"id"`
-	ImageURL  string         `json:"image_url"`
-	Status    string         `json:"status"`
-	OCRData   *PaddleOCRData `json:"ocr_data"`
-	Error     *string        `json:"error"`
-	CreatedBy uuid.UUID      `json:"created_by"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	ID        uuid.UUID   `json:"id"`
+	ImageURL  string      `json:"image_url"`
+	Status    string      `json:"status"`
+	OCRData   *ParseResult `json:"ocr_data,omitempty"`
+	Error     *string     `json:"error,omitempty"`
+	CreatedBy uuid.UUID   `json:"created_by"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
 }

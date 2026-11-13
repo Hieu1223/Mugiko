@@ -32,6 +32,9 @@ class ProviderInfo:
     base_url: Optional[str]
     cls: type
     services: List[ServiceInfo] = field(default_factory=list)
+    auto_languages: Optional[List[str]] = None
+    auto_service_key_template: str = "{kind}_{lang}"
+    auto_service_name_template: str = "Generate {lang_name} Subtitles"
 
     def add_service(self, service_info: ServiceInfo) -> None:
         self.services.append(service_info)
@@ -46,8 +49,20 @@ class ProviderInfo:
 _provider_registry: Dict[str, ProviderInfo] = {}
 
 
-def provider(name: str, kind: str, base_url: Optional[str] = None):
-    """Register a provider class under ``name``."""
+def provider(
+    name: str,
+    kind: str,
+    base_url: Optional[str] = None,
+    auto_languages: Optional[List[str]] = None,
+    auto_service_key_template: str = "{kind}_{lang}",
+    auto_service_name_template: str = "Generate {lang_name} Subtitles",
+):
+    """Register a provider class under ``name``.
+
+    If ``auto_languages`` is provided, services are auto-generated for each
+    language code. The provider class must implement a ``generate(self, url,
+    language)`` method that returns a ``RawSubtitleArtifact``.
+    """
 
     def decorator(cls):
         provider_info = ProviderInfo(
@@ -55,6 +70,9 @@ def provider(name: str, kind: str, base_url: Optional[str] = None):
             kind=kind,
             base_url=base_url,
             cls=cls,
+            auto_languages=auto_languages,
+            auto_service_key_template=auto_service_key_template,
+            auto_service_name_template=auto_service_name_template,
         )
         _provider_registry[name] = provider_info
         cls._provider_info = provider_info
@@ -85,6 +103,55 @@ def _collect_services_from_class(cls: type) -> None:
         return
 
     provider_info.services.clear()
+
+    # Auto-generate services for providers that declare auto_languages.
+    if provider_info.auto_languages:
+        lang_names = {
+            "ja": "Japanese",
+            "vi": "Vietnamese",
+            "en": "English",
+            "ko": "Korean",
+            "zh": "Chinese",
+            "fr": "French",
+            "de": "German",
+            "es": "Spanish",
+            "pt": "Portuguese",
+            "it": "Italian",
+            "ru": "Russian",
+        }
+        generate_method = getattr(cls, "generate", None)
+        if generate_method is not None:
+            for lang in provider_info.auto_languages:
+                lang_name = lang_names.get(lang, lang.upper())
+                service_key = provider_info.auto_service_key_template.format(
+                    kind=provider_info.kind, lang=lang
+                )
+                service_name = provider_info.auto_service_name_template.format(
+                    lang_name=lang_name
+                )
+
+                # Create a bound wrapper that calls generate(url, language)
+                def _make_func(lang_code: str):
+                    def _auto_service(self, url: str):
+                        return self.generate(url, lang_code)
+
+                    _auto_service._service_key = service_key
+                    _auto_service._service_name = service_name
+                    _auto_service._service_options = {"language": lang_code}
+                    return _auto_service
+
+                func = _make_func(lang)
+                # Store the unbound function; worker calls func(cls(), url)
+                provider_info.add_service(
+                    ServiceInfo(
+                        service_key=service_key,
+                        name=service_name,
+                        options={"language": lang},
+                        func=func,
+                    )
+                )
+
+    # Collect manually decorated @service methods.
     for attr_name in dir(cls):
         if attr_name.startswith("_"):
             continue

@@ -4,7 +4,7 @@
 *.dll
 *.so
 *.dylib
-
+groq.txt
 # Build outputs
 /dist
 /build

@@ -11,6 +11,11 @@ from .db import Database
 
 logger = logging.getLogger(__name__)
 
+# Rows eligible for recovery: stuck in queued/processing after a silence
+# period. "failed" is intentionally terminal so permanently failing jobs
+# (e.g. a video with no subtitle track) are not retried endlessly.
+_STALE_STATUSES = ("queued", "processing")
+
 
 class SubtitleRepository:
     """Status transitions and idempotent segment writes.
@@ -90,3 +95,56 @@ class SubtitleRepository:
             len(values),
             subtitle_id,
         )
+
+    def claim_stale_jobs(
+        self, stale_after_seconds: int, limit: int
+    ) -> List[Dict[str, Any]]:
+        """Claim stuck subtitle rows so another worker can retry them.
+
+        Selects rows in ``queued``/``processing`` older than
+        ``stale_after_seconds`` seconds, marks them ``processing`` atomically
+        (``FOR UPDATE SKIP LOCKED``), and returns them with provider/service
+        keys so the worker can rebuild the job message and rerun it.
+
+        ``failed`` rows are intentionally skipped — they are terminal.
+        """
+        if limit <= 0:
+            return []
+
+        placeholders = ",".join(["%s"] * len(_STALE_STATUSES))
+        with self._db.transaction() as cursor:
+            cursor.execute(
+                f"""
+                WITH locked AS (
+                    SELECT s.id
+                    FROM subtitles s
+                    WHERE s.status IN ({placeholders})
+                      AND s.updated_at < NOW() - (%s || ' seconds')::interval
+                    ORDER BY s.updated_at
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT %s
+                ),
+                updated AS (
+                    UPDATE subtitles s
+                    SET status = 'processing', updated_at = NOW()
+                    WHERE s.id IN (SELECT id FROM locked)
+                    RETURNING s.id, s.video_url, s.provider_id, s.service_id
+                )
+                SELECT u.id AS subtitle_id,
+                       u.video_url,
+                       p.name  AS provider_name,
+                       sv.service_key
+                FROM updated u
+                JOIN subtitle_providers p ON p.id = u.provider_id
+                JOIN subtitle_provider_services sv
+                  ON sv.id = u.service_id AND sv.provider_id = u.provider_id
+                """,
+                list(_STALE_STATUSES) + [str(stale_after_seconds), limit],
+            )
+            rows = [dict(row) for row in cursor.fetchall()]
+
+        if rows:
+            logger.info(
+                "Recovered %d stale subtitle job(s)", len(rows),
+            )
+        return rows

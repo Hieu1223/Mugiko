@@ -255,7 +255,7 @@ CREATE TABLE IF NOT EXISTS ocr_results (
     id         UUID PRIMARY KEY,
     image_url  TEXT NOT NULL,
     status     TEXT NOT NULL DEFAULT 'queued',
-    -- PaddleOCR output: {"dt_polys": [...], "rec_texts": [...], "rec_polys": [...]}
+    -- NVIDIA nemotron-3.5-parse output stored as raw JSON
     ocr_data   JSONB,
     error      TEXT,
     created_by TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
@@ -271,6 +271,8 @@ CREATE INDEX IF NOT EXISTS idx_ocr_results_created_at
     ON ocr_results(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ocr_results_image_url
     ON ocr_results(image_url);
+
+ALTER TABLE "public"."ocr_results" REPLICA IDENTITY FULL;
 
 
 -- LLM module (MugikoGO API - uses llm_jobs table)

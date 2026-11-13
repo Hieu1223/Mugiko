@@ -6,6 +6,7 @@ const (
 	AuthTypeFirebase  AuthType = "firebase"
 	AuthTypeAdmin     AuthType = "admin"
 	AuthTypeAnonymous AuthType = "anonymous"
+	AuthTypeSystem    AuthType = "system"
 )
 
 type Role string

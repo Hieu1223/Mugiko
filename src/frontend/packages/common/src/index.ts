@@ -22,7 +22,7 @@ export {
 } from './libs/router'
 
 export { ApiError, apiFetch, apiRequest, checkHealth, errorDetail, isApiError, streamServerEvents } from './libs/api'
-export type { ServerEvent, StreamOptions } from './libs/api'
+export type { RequestOptions, ServerEvent, StreamOptions } from './libs/api'
 export {
   bootstrapAnonymousSession,
   isForbidden,

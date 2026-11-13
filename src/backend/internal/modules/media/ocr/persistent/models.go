@@ -1,9 +1,12 @@
 package persistent
 
 import (
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
+
+	"mugiko/internal/modules/media/ocr/exception"
 )
 
 const (
@@ -24,3 +27,6 @@ type OCRResult struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
+
+// ErrOCRNotFound is returned when an OCR job does not exist.
+var ErrOCRNotFound = errors.New(exception.MsgOCRNotFound)

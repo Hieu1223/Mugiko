@@ -27,6 +27,8 @@ export interface RequestOptions {
   auth?: boolean
   /** Use this token instead of the current session token. */
   token?: string | null
+  /** Absolute API base (e.g. http://localhost:8090/api/v1). Defaults to VITE_API_BASE_URL. */
+  base?: string
 }
 
 export interface ApiResult<T> {
@@ -43,8 +45,7 @@ export function setUnauthorizedHandler(handler: (() => void) | null) {
   unauthorizedHandler = handler
 }
 
-export function apiUrl(path: string, query?: RequestOptions['query']): string {
-  const base = API_BASE
+export function apiUrl(path: string, query?: RequestOptions['query'], base = API_BASE): string {
   const cleanPath = path.startsWith('/') ? path : `/${path}`
   const params = new URLSearchParams()
   if (query) {
@@ -107,14 +108,14 @@ function detailFrom(payload: unknown, fallback: string): string {
 }
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<ApiResult<T>> {
-  const { method = 'GET', body, query, signal, auth = true, token } = options
+  const { method = 'GET', body, query, signal, auth = true, token, base } = options
   const headers = new Headers(options.headers)
   const effectiveToken = token !== undefined ? token : auth ? authToken : null
 
   if (effectiveToken) headers.set('Authorization', `Bearer ${effectiveToken}`)
   if (body !== undefined && !(body instanceof FormData)) headers.set('Content-Type', 'application/json')
 
-  const response = await fetch(apiUrl(path, query), {
+  const response = await fetch(apiUrl(path, query, base), {
     method,
     headers,
     signal,

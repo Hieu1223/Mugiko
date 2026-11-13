@@ -54,6 +54,16 @@ const AIPage = lazy(() =>
   import('@mugiko/ai').then((module) => ({ default: module.AIPage })),
 )
 
+const MangaHomePage = lazy(() =>
+  import('@mugiko/manga').then((module) => ({ default: module.MangaHomePage })),
+)
+const MangaDetailPage = lazy(() =>
+  import('@mugiko/manga').then((module) => ({ default: module.MangaDetailPage })),
+)
+const MangaReaderPage = lazy(() =>
+  import('@mugiko/manga').then((module) => ({ default: module.MangaReaderPage })),
+)
+
 const subtitleNav: SiteNav = {
   id: 'subtitle',
   label: 'Subtitles',
@@ -77,7 +87,14 @@ const webnovelNav: SiteNav = {
   ],
 }
 
-const SITE_NAVS: SiteNav[] = [subtitleNav, webnovelNav]
+const mangaNav: SiteNav = {
+  id: 'manga',
+  label: 'Manga',
+  base: '/manga',
+  items: [{ to: '/manga', label: 'Library', page: 'manga-home' }],
+}
+
+const SITE_NAVS: SiteNav[] = [subtitleNav, webnovelNav, mangaNav]
 
 function activePageFor(rawPathname: string): string {
   const pathname = rawPathname.replace(/\/+$/, '') || '/'
@@ -99,6 +116,10 @@ function activePageFor(rawPathname: string): string {
   if (pathname === '/webnovel/search') return 'webnovel-search'
   if (pathname.startsWith('/webnovel/chapters/')) return 'webnovel-reader'
   if (pathname.startsWith('/webnovel/')) return 'webnovel-detail'
+
+  if (pathname === '/manga') return 'manga-home'
+  if (pathname.startsWith('/manga/chapters/')) return 'manga-reader'
+  if (pathname.startsWith('/manga/')) return 'manga-detail'
 
   return 'not-found'
 }
@@ -244,6 +265,17 @@ export function App() {
                 </RequireUuid>
               }
             />
+
+            <Route path="/manga" element={<MangaHomePage />} />
+            <Route
+              path="/manga/chapters/:chapterId"
+              element={
+                <RequireUuid param="chapterId" redirectTo="/manga">
+                  <MangaReaderPage />
+                </RequireUuid>
+              }
+            />
+            <Route path="/manga/:mangaId" element={<MangaDetailPage />} />
 
             <Route path="*" element={<CatchAllPage />} />
           </Routes>

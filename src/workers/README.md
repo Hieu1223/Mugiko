@@ -124,14 +124,19 @@ progress is derived from DB writes.
 ## Status flow & guarantees
 
 - `queued → processing → completed | failed`
-- At-least-once delivery: messages are
-  [XACKed only after the orchestrator finishes](src/listener.py); crashed or
-  unhandled messages stay pending and are reclaimed after `CLAIM_IDLE_MS`.
+- At-least-once delivery: messages are XACKed only after the orchestrator
+  finishes; crashed or unhandled messages stay pending and are reclaimed after
+  `CLAIM_IDLE_MS`.
 - Handlers are idempotent: already-`completed` jobs are skipped on redelivery,
   and segment replaces delete-then-insert in one transaction.
 - Job-level failures (`NoSubtitlesAvailable`, unknown provider/service, invalid
   job id, malformed message) are recorded on the job and acknowledged — a
   poison message never wedges the group.
+- Stale-job recovery: on a Redis socket timeout (and at worker startup), the
+  worker scans PostgreSQL for `queued`/`processing` rows older than
+  `RECOVERY_STALE_SECONDS`, claims them atomically (`FOR UPDATE SKIP LOCKED`),
+  and reruns them through the pipeline. `failed` rows are left terminal and are
+  not retried.
 
 ## Subtitle cache (Redis)
 

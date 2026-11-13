@@ -20,6 +20,7 @@ export default defineConfig(({ mode }) => {
         '@mugiko/subtitle': source('./packages/subtitle/src/index.tsx'),
         '@mugiko/webnovel': source('./packages/webnovel/src/index.tsx'),
         '@mugiko/ai': source('./packages/ai/src/index.tsx'),
+        '@mugiko/manga': source('./packages/manga/src/index.tsx'),
       },
     },
     server: {

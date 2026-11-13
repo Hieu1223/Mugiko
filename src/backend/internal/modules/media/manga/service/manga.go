@@ -84,6 +84,9 @@ func (s *MangaService) UpdateProvider(r *http.Request, providerID uuid.UUID, req
 	if err != nil {
 		return nil, err
 	}
+	if provider.IsBuiltin {
+		return nil, ErrBuiltinProvider
+	}
 	if provider.OwnerID != userID && user.Role != "admin" {
 		return nil, ErrForbidden
 	}
@@ -117,6 +120,9 @@ func (s *MangaService) DeleteProvider(r *http.Request, providerID uuid.UUID) err
 	provider, err := s.repo.GetProvider(providerID)
 	if err != nil {
 		return err
+	}
+	if provider.IsBuiltin {
+		return ErrBuiltinProvider
 	}
 	if provider.OwnerID != userID && user.Role != "admin" {
 		return ErrForbidden
@@ -337,6 +343,7 @@ var (
 	ErrProviderAlreadyExists = &ServiceError{Code: "PROVIDER_EXISTS", Status: http.StatusConflict, Message: exception.MsgProviderAlreadyExists}
 	ErrMangaNotFound         = &ServiceError{Code: "MANGA_NOT_FOUND", Status: http.StatusNotFound, Message: exception.MsgMangaNotFound}
 	ErrNotImplemented        = &ServiceError{Code: "NOT_IMPLEMENTED", Status: http.StatusNotImplemented, Message: exception.MsgNotImplemented}
+	ErrBuiltinProvider       = &ServiceError{Code: "BUILTIN_PROVIDER", Status: http.StatusForbidden, Message: "The built-in provider cannot be modified or deleted."}
 )
 
 type ServiceError struct {

@@ -7,6 +7,7 @@ const SITES = [
   { to: '/decks', label: 'Decks' },
   { to: '/lookup', label: 'Lookup' },
   { to: '/ai', label: 'AI' },
+  { to: '/manga', label: 'Manga' },
 ]
 
 export function HomePage() {

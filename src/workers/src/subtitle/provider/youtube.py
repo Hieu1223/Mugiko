@@ -100,9 +100,14 @@ def _pick_subtitle_file(tmp_dir: str, language: str) -> Optional[str]:
     name="YouTube",
     kind="youtube",
     base_url="https://www.youtube.com",
+    auto_languages=["ja", "vi"],
 )
 class YouTubeProvider:
     """Fetches subtitles with yt-dlp and returns the raw json3 document."""
+
+    def generate(self, url: str, language: str) -> RawSubtitleArtifact:
+        """Generate subtitles for the given language."""
+        return self._download_json3(url, language)
 
     def _download_json3(self, url: str, language: str) -> RawSubtitleArtifact:
         video_id = _video_id_from_url(url)
@@ -313,20 +318,4 @@ class YouTubeProvider:
             + int(parts[2].split(".")[1])
         )
 
-    @service(
-        "youtube_ja",
-        "Download Japanese Subtitles",
-        options={"language": "ja"},
-    )
-    def youtube_ja(self, url: str) -> RawSubtitleArtifact:
-        """Download the Japanese subtitle track (auto fallback included)."""
-        return self._download_json3(url, "ja")
-
-    @service(
-        "youtube_vi",
-        "Download Vietnamese Subtitles",
-        options={"language": "vi"},
-    )
-    def youtube_vi(self, url: str) -> RawSubtitleArtifact:
-        """Download the Vietnamese subtitle track (auto fallback included)."""
-        return self._download_json3(url, "vi")
+    # Services are auto-registered via auto_languages above.
